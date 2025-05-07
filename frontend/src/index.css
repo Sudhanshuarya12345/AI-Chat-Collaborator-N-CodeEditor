@@ -1,0 +1,23 @@
+*{
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+
+html,
+body{
+  height: 100%;
+  width: 100%;
+}
+
+/* Hide scrollbar but keep scroll functionality */
+.hide-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE 10+ */
+
+  /* WebKit (Chrome, Safari) */
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
