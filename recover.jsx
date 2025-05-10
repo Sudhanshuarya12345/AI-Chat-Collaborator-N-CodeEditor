@@ -49,7 +49,6 @@ const Project = () => {
     const [currentProcess, setCurrentProcess] = useState(null)
     const [outputLogs, setOutputLogs] = useState([]) // Add this for output logs
     const [activeTab, setActiveTab] = useState('preview') // 'preview' | 'output'
-    
 
     const handleUserClick = (id) => {
         setSelectedUserId(prevSelectedUserId => {
@@ -423,6 +422,53 @@ const Project = () => {
             // First mount the file tree
             await webContainer?.mount(fileTree);
 
+            // Create or update package.json if it doesn't exist
+            const packageJson = {
+                name: "express-app",
+                version: "1.0.0",
+                type: "module",
+                scripts: {
+                    start: "node app.js"
+                },
+                dependencies: {
+                    "express": "^4.18.2",
+                    "cors": "^2.8.5",
+                    "dotenv": "^16.0.3"
+                }
+            };
+
+            // Write package.json
+            await webContainer?.fs.writeFile(
+                '/package.json',
+                JSON.stringify(packageJson, null, 2)
+            );
+
+            // Ensure app.js exists with proper setup
+            const appJsContent = `
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+
+// Basic route
+app.get('/', (req, res) => {
+    res.json({ message: 'Server is running!' });
+});
+
+app.listen(port, () => {
+    console.log(\`Server is running on port \${port}\`);
+});
+`;
+
+            await webContainer?.fs.writeFile('/app.js', appJsContent);
+
             // Install dependencies
             setStatusMessage('Installing dependencies...');
             setOutputLogs(prev => [...prev, 'Installing dependencies...']);
@@ -443,21 +489,15 @@ const Project = () => {
             setContainerStatus('starting');
             setStatusMessage('Starting server...');
             setOutputLogs(prev => [...prev, 'Starting server...']);
-
-            if(currentProcess){
-                currentProcess.kill()
-            }
+            const runProcess = await webContainer?.spawn('npm', ['start']);
+            setCurrentProcess(runProcess);
             
-            const tempRunProcess = await webContainer?.spawn('npm', ['start']);
-            
-            currentProcess.output.pipeTo(new WritableStream({
+            runProcess.output.pipeTo(new WritableStream({
                 write(chunk) {
                     console.log(chunk);
                     setOutputLogs(prev => [...prev, chunk]);
                 }
             }));
-            
-            setCurrentProcess(tempRunProcess);
 
             webContainer.on('server-ready', (port, url) => {
                 console.log(`Server ready at ${url}`);
@@ -850,16 +890,126 @@ const Project = () => {
                     </div>
                 </div>
 
-                {iframeUrl && webContainer &&
-                    (<div className="flex min-w-96 flex-col h-full">
-                        <div className="address-bar">
-                            
-                            <input type="text" 
-                                onChange={(e)=>setIframeUrl(e.target.value)}
-                                value={iframeUrl} className='w-full p-2 px-4 bg-slate-400'
-                            />
+                {containerStatus === 'running' && iframeUrl && (
+                    <div className="absolute inset-0 bg-slate-900 rounded-lg overflow-hidden shadow-2xl border border-slate-700">
+                        {/* Header */}
+                        <div className="absolute top-0 left-0 right-0 h-12 bg-slate-800 flex items-center justify-between px-4 border-b border-slate-700">
+                            <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
+                                    <span className="text-sm font-medium text-slate-300">Server Running</span>
+                                </div>
+                                <div className="h-4 w-px bg-slate-600" />
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => setActiveTab('preview')}
+                                        className={`px-3 py-1 rounded-md text-sm font-medium transition-colors
+                                            ${activeTab === 'preview' 
+                                                ? 'bg-slate-700 text-white' 
+                                                : 'text-slate-400 hover:text-slate-300 hover:bg-slate-700/50'}`}
+                                    >
+                                        Preview
+                                    </button>
+                                    <button 
+                                        onClick={() => setActiveTab('output')}
+                                        className={`px-3 py-1 rounded-md text-sm font-medium transition-colors
+                                            ${activeTab === 'output' 
+                                                ? 'bg-slate-700 text-white' 
+                                                : 'text-slate-400 hover:text-slate-300 hover:bg-slate-700/50'}`}
+                                    >
+                                        Output
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button 
+                                    onClick={() => {
+                                        setOutputLogs([]);
+                                    }}
+                                    className="p-1.5 text-slate-400 hover:text-slate-300 hover:bg-slate-700/50 rounded-md transition-colors"
+                                    title="Clear Output"
+                                >
+                                    <i className="ri-delete-bin-line text-lg" />
+                                </button>
+                                <button 
+                                    onClick={handleCloseServer}
+                                    className="p-1.5 text-slate-400 hover:text-slate-300 hover:bg-slate-700/50 rounded-md transition-colors"
+                                    title="Close Server"
+                                >
+                                    <i className="ri-close-line text-lg" />
+                                </button>
+                            </div>
                         </div>
-                        <iframe src={iframeUrl} className='w-1//2 h-full'></iframe>
+
+                        {/* Content */}
+                        <div className="absolute inset-0 pt-12">
+                            {activeTab === 'preview' ? (
+                                <iframe 
+                                    src={iframeUrl} 
+                                    className="w-full h-full border-0"
+                                    title="Server Preview"
+                                />
+                            ) : (
+                                <div className="w-full h-full bg-slate-950">
+                                    {/* Output Header */}
+                                    <div className="h-8 bg-slate-900 border-b border-slate-800 flex items-center px-4">
+                                        <div className="flex items-center gap-2">
+                                            <i className="ri-terminal-box-line text-blue-400" />
+                                            <span className="text-sm font-medium text-slate-300">Server Output</span>
+                                        </div>
+                                        <div className="ml-auto flex items-center gap-2">
+                                            <span className="text-xs text-slate-500">
+                                                {outputLogs.length} lines
+                                            </span>
+                                            <button 
+                                                onClick={() => {
+                                                    setOutputLogs([]);
+                                                }}
+                                                className="p-1 text-slate-400 hover:text-slate-300 hover:bg-slate-800 rounded transition-colors"
+                                                title="Clear Output"
+                                            >
+                                                <i className="ri-delete-bin-line text-sm" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Output Content */}
+                                    <div className="p-4 overflow-auto h-[calc(100%-2rem)] font-mono text-sm">
+                                        <div className="space-y-0.5">
+                                            {outputLogs.map((log, index) => {
+                                                // Determine log type for styling
+                                                const isError = log.toLowerCase().includes('error');
+                                                const isSuccess = log.toLowerCase().includes('success') || 
+                                                                       log.toLowerCase().includes('ready') ||
+                                                                       log.toLowerCase().includes('running');
+                                                const isCommand = log.startsWith('>') || 
+                                                                       log.startsWith('$') || 
+                                                                       log.startsWith('npm');
+
+                                                return (
+                                                    <div 
+                                                        key={index}
+                                                        className={`
+                                                            whitespace-pre-wrap break-all px-2 py-0.5 rounded
+                                                            ${isError 
+                                                                ? 'text-red-400 bg-red-900/20' 
+                                                                : isSuccess 
+                                                                ? 'text-green-400 bg-green-900/20'
+                                                                : isCommand
+                                                                ? 'text-blue-400 bg-blue-900/20'
+                                                                : 'text-slate-300'
+                                                            }
+                                                        `}
+                                                    >
+                                                        {log}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )}
 
@@ -869,3 +1019,61 @@ const Project = () => {
 }
 
 export default Project
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
