@@ -221,13 +221,25 @@ const Project = () => {
         recieveMessage('project-message', async data => {
             try {
                 let message;
+                let fileTree = null;
                 try {
                     message = JSON.parse(data.message);
                 } catch (e) {
                     message = data.message;
+                    // Try to extract JSON from code block if not valid JSON
+                    const extracted = extractJsonFromCodeBlock(data.message);
+                    if (extracted && extracted.fileTree) {
+                        fileTree = extracted.fileTree;
+                    }
                 }
-
-                if (message.fileTree) {
+                // If message is an object and has fileTree
+                if (!fileTree && message && typeof message === 'object' && message.fileTree) {
+                    fileTree = message.fileTree;
+                }
+                if (fileTree) {
+                    patchExpressPortInFileTree(fileTree); // Patch before mounting
+                    patchPackageJsonStartScript(fileTree); // Patch start script
+                    patchStaticFrontendProject(fileTree); // Patch static frontend
                     // Get the latest webContainer instance
                     if (!currentWebContainer) {
                         currentWebContainer = await getWebContainer();
@@ -235,8 +247,9 @@ const Project = () => {
                     }
 
                     if (currentWebContainer) {
-                        await currentWebContainer.mount(message.fileTree);
-                        setFileTree(message.fileTree);
+                        await currentWebContainer.mount(fileTree);
+                        setFileTree(fileTree);
+                        console.log("Updated fileTree:", fileTree); // <-- Debug log
                     } else {
                         console.error('WebContainer not initialized');
                     }
@@ -427,16 +440,21 @@ const Project = () => {
             setStatusMessage('Installing dependencies...');
             setOutputLogs(prev => [...prev, 'Installing dependencies...']);
             const installProcess = await webContainer?.spawn('npm', ['install']);
-            setCurrentProcess(installProcess);
             
-            installProcess.output.pipeTo(new WritableStream({
-                write(chunk) {
-                    console.log(chunk);
-                    setOutputLogs(prev => [...prev, chunk]);
-                }
-            }));
+            if (installProcess && installProcess.output) {
+                installProcess.output.pipeTo(new WritableStream({
+                    write(chunk) {
+                        console.log(chunk);
+                        setOutputLogs(prev => [...prev, chunk]);
+                    }
+                }));
+                
+                setCurrentProcess(installProcess);
+                await installProcess.exit;
+            } else {
+                throw new Error('Failed to start installation process');
+            }
 
-            await installProcess.exit;
             setCurrentProcess(null);
 
             // Start the server
@@ -450,22 +468,26 @@ const Project = () => {
             
             const tempRunProcess = await webContainer?.spawn('npm', ['start']);
             
-            currentProcess.output.pipeTo(new WritableStream({
-                write(chunk) {
-                    console.log(chunk);
-                    setOutputLogs(prev => [...prev, chunk]);
-                }
-            }));
-            
-            setCurrentProcess(tempRunProcess);
+            if (tempRunProcess && tempRunProcess.output) {
+                tempRunProcess.output.pipeTo(new WritableStream({
+                    write(chunk) {
+                        console.log(chunk);
+                        setOutputLogs(prev => [...prev, chunk]);
+                    }
+                }));
+                
+                setCurrentProcess(tempRunProcess);
 
-            webContainer.on('server-ready', (port, url) => {
-                console.log(`Server ready at ${url}`);
-                setOutputLogs(prev => [...prev, `Server ready at ${url}`]);
-                setIframeUrl(url);
-                setContainerStatus('running');
-                setStatusMessage('Server is running');
-            });
+                webContainer.on('server-ready', (port, url) => {
+                    console.log(`Server ready at ${url}`);
+                    setOutputLogs(prev => [...prev, `Server ready at ${url}`]);
+                    setIframeUrl(url);
+                    setContainerStatus('running');
+                    setStatusMessage('Server is running');
+                });
+            } else {
+                throw new Error('Failed to start server process');
+            }
 
         } catch (error) {
             console.error('Error running application:', error);
@@ -475,6 +497,106 @@ const Project = () => {
             setCurrentProcess(null);
         }
     };
+
+    // Helper to extract JSON from code blocks in markdown
+    function extractJsonFromCodeBlock(text) {
+        // Match ```json ... ``` or ``` ... ```
+        const codeBlockMatch = text.match(/```(?:json)?([\s\S]*?)```/i);
+        if (codeBlockMatch) {
+            try {
+                return JSON.parse(codeBlockMatch[1]);
+            } catch (e) {
+                // Ignore parse error
+            }
+        }
+        // Try to find first { ... } block
+        const jsonMatch = text.match(/({[\s\S]*})/);
+        if (jsonMatch) {
+            try {
+                return JSON.parse(jsonMatch[1]);
+            } catch (e) {}
+        }
+        return null;
+    }
+
+    // Helper to patch Express server files to use process.env.PORT
+    function patchExpressPortInFileTree(tree) {
+        const patchFile = (contents) => {
+            // Replace const port = 3000; or let port = 3000; with process.env.PORT || 3000
+            return contents.replace(/(const|let)\s+port\s*=\s*['"]?3000['"]?;/, '$1 port = process.env.PORT || 3000;');
+        };
+        for (const [name, node] of Object.entries(tree)) {
+            if (node.file && (name === 'app.js' || name === 'server.js')) {
+                node.file.contents = patchFile(node.file.contents);
+            } else if (node.directory) {
+                patchExpressPortInFileTree(node.directory);
+            }
+        }
+    }
+
+    // Helper to patch package.json to ensure a start script exists
+    function patchPackageJsonStartScript(tree) {
+        let mainFile = null;
+        if (tree['app.js']) mainFile = 'app.js';
+        else if (tree['server.js']) mainFile = 'server.js';
+        if (tree['package.json'] && tree['package.json'].file) {
+            try {
+                const pkg = JSON.parse(tree['package.json'].file.contents);
+                if (!pkg.scripts) pkg.scripts = {};
+                if (!pkg.scripts.start && mainFile) {
+                    pkg.scripts.start = `node ${mainFile}`;
+                    tree['package.json'].file.contents = JSON.stringify(pkg, null, 2);
+                }
+            } catch (e) {
+                // ignore
+            }
+        }
+        // Recurse into directories
+        for (const [name, node] of Object.entries(tree)) {
+            if (node.directory) patchPackageJsonStartScript(node.directory);
+        }
+    }
+
+    // Helper to patch static frontend projects to add a live-server start script
+    function patchStaticFrontendProject(tree) {
+        const hasIndexHtml = !!tree['index.html'];
+        const hasPackageJson = !!tree['package.json'];
+        const hasBackend = tree['app.js'] || tree['server.js'];
+        if (hasIndexHtml && !hasBackend) {
+            // Add or patch package.json
+            if (!hasPackageJson) {
+                tree['package.json'] = {
+                    file: {
+                        contents: JSON.stringify({
+                            name: 'static-frontend',
+                            version: '1.0.0',
+                            scripts: {
+                                start: 'npx live-server --port=3000 --no-browser'
+                            },
+                            devDependencies: {
+                                'live-server': '^1.2.2'
+                            }
+                        }, null, 2)
+                    }
+                };
+            } else {
+                try {
+                    const pkg = JSON.parse(tree['package.json'].file.contents);
+                    if (!pkg.scripts) pkg.scripts = {};
+                    if (!pkg.scripts.start) {
+                        pkg.scripts.start = 'npx live-server --port=3000 --no-browser';
+                    }
+                    if (!pkg.devDependencies) pkg.devDependencies = {};
+                    pkg.devDependencies['live-server'] = '^1.2.2';
+                    tree['package.json'].file.contents = JSON.stringify(pkg, null, 2);
+                } catch (e) {}
+            }
+        }
+        // Recurse into directories
+        for (const [name, node] of Object.entries(tree)) {
+            if (node.directory) patchStaticFrontendProject(node.directory);
+        }
+    }
 
     return (
         <main className="h-screen min-h-screen w-screen flex bg-slate-900 text-slate-100">
@@ -674,7 +796,11 @@ const Project = () => {
                     </div>
                     {/* File Tree (recursive) */}
                     <div className="flex-grow overflow-y-auto p-2 space-y-1">
-                        {renderFileTree(fileTree)}
+                        {Object.keys(fileTree).length === 0 ? (
+                            <div className="text-slate-400 text-center">No files found.</div>
+                        ) : (
+                            renderFileTree(fileTree)
+                        )}
                     </div>
                 </div>
 

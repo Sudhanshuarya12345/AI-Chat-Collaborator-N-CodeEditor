@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: ai-code-collab-backend
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: GOOGLE_AI_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
