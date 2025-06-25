@@ -61,7 +61,7 @@ const Register = ()=> {
             type="submit"
             className="w-full bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-lg font-semibold transition"
           >
-            Register & login
+            Register
           </button>
         </form>
         <p className="text-gray-400 text-center mt-4">
