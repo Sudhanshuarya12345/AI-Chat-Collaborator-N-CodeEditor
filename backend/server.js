@@ -119,7 +119,7 @@ io.on('connection', (socket) => {
     });
 });
 
-server.listen(8080, ()=>{
+server.listen(port, ()=>{
     console.log(`Server is running on port ${port}.`)
 })
 
