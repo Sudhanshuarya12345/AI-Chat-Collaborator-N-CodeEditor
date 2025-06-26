@@ -50,6 +50,8 @@ const Project = () => {
     const [outputLogs, setOutputLogs] = useState([]) // Add this for output logs
     const [activeTab, setActiveTab] = useState('preview') // 'preview' | 'output'
     
+    // Add at the top of the component
+    const webContainerRef = useRef(null);
 
     const handleUserClick = (id) => {
         setSelectedUserId(prevSelectedUserId => {
@@ -193,13 +195,15 @@ const Project = () => {
 
         const initializeContainer = async () => {
             try {
-                const container = await getWebContainer();
-                setWebContainer(container);
-                console.log("Container started");
-
+                if (!webContainerRef.current) {
+                    const container = await getWebContainer();
+                    webContainerRef.current = container;
+                    setWebContainer(container);
+                    console.log("Container started");
+                }
                 // Initialize file system with project files
-                if (project.files) {
-                    await container.mount(project.files);
+                if (project.files && webContainerRef.current) {
+                    await webContainerRef.current.mount(project.files);
                     setFileTree(project.files);
                 }
             } catch (error) {
@@ -295,8 +299,10 @@ const Project = () => {
 
         // Cleanup function
         return () => {
-            if (currentWebContainer) {
-                currentWebContainer = null;
+            if (webContainerRef.current) {
+                // If your WebContainer API supports a destroy/close method, call it here
+                // webContainerRef.current.destroy();
+                webContainerRef.current = null;
             }
         };
     }, []);
