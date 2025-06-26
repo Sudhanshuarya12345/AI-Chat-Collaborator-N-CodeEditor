@@ -50,8 +50,6 @@ const Project = () => {
     const [outputLogs, setOutputLogs] = useState([]) // Add this for output logs
     const [activeTab, setActiveTab] = useState('preview') // 'preview' | 'output'
     
-    // Add at the top of the component
-    const webContainerRef = useRef(null);
 
     const handleUserClick = (id) => {
         setSelectedUserId(prevSelectedUserId => {
@@ -195,15 +193,13 @@ const Project = () => {
 
         const initializeContainer = async () => {
             try {
-                if (!webContainerRef.current) {
-                    const container = await getWebContainer();
-                    webContainerRef.current = container;
-                    setWebContainer(container);
-                    console.log("Container started");
-                }
+                const container = await getWebContainer();
+                setWebContainer(container);
+                console.log("Container started");
+
                 // Initialize file system with project files
-                if (project.files && webContainerRef.current) {
-                    await webContainerRef.current.mount(project.files);
+                if (project.files) {
+                    await container.mount(project.files);
                     setFileTree(project.files);
                 }
             } catch (error) {
@@ -226,38 +222,20 @@ const Project = () => {
             try {
                 let message;
                 let fileTree = null;
-                // --- DEBUG LOGGING ---
-                console.log("Raw socket message:", data.message);
                 try {
-                    // Try direct JSON parse
                     message = JSON.parse(data.message);
-                    if (message && message.fileTree) {
-                        fileTree = message.fileTree;
-                    }
                 } catch (e) {
-                    // Try extracting JSON from code block
+                    message = data.message;
+                    // Try to extract JSON from code block if not valid JSON
                     const extracted = extractJsonFromCodeBlock(data.message);
                     if (extracted && extracted.fileTree) {
                         fileTree = extracted.fileTree;
-                    } else {
-                        // Try parsing as stringified object with fileTree
-                        try {
-                            const possibleObj = JSON.parse(data.message);
-                            if (possibleObj && possibleObj.fileTree) {
-                                fileTree = possibleObj.fileTree;
-                            }
-                        } catch (err) {
-                            // Not JSON, fallback
-                            fileTree = null;
-                        }
                     }
                 }
-                // Fallback: if message is an object and has fileTree
-                if (!fileTree && typeof message === 'object' && message.fileTree) {
+                // If message is an object and has fileTree
+                if (!fileTree && message && typeof message === 'object' && message.fileTree) {
                     fileTree = message.fileTree;
                 }
-                // --- END DEBUG LOGGING ---
-                console.log("Extracted fileTree:", fileTree);
                 if (fileTree) {
                     patchExpressPortInFileTree(fileTree); // Patch before mounting
                     patchPackageJsonStartScript(fileTree); // Patch start script
@@ -299,10 +277,8 @@ const Project = () => {
 
         // Cleanup function
         return () => {
-            if (webContainerRef.current) {
-                // If your WebContainer API supports a destroy/close method, call it here
-                // webContainerRef.current.destroy();
-                webContainerRef.current = null;
+            if (currentWebContainer) {
+                currentWebContainer = null;
             }
         };
     }, []);
