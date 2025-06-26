@@ -49,7 +49,7 @@ const Project = () => {
     const [currentProcess, setCurrentProcess] = useState(null)
     const [outputLogs, setOutputLogs] = useState([]) // Add this for output logs
     const [activeTab, setActiveTab] = useState('preview') // 'preview' | 'output'
-    
+
 
     const handleUserClick = (id) => {
         setSelectedUserId(prevSelectedUserId => {
@@ -221,25 +221,17 @@ const Project = () => {
         recieveMessage('project-message', async data => {
             try {
                 let message;
-                let fileTree = null;
                 try {
                     message = JSON.parse(data.message);
                 } catch (e) {
                     message = data.message;
-                    // Try to extract JSON from code block if not valid JSON
-                    const extracted = extractJsonFromCodeBlock(data.message);
-                    if (extracted && extracted.fileTree) {
-                        fileTree = extracted.fileTree;
-                    }
                 }
-                // If message is an object and has fileTree
-                if (!fileTree && message && typeof message === 'object' && message.fileTree) {
-                    fileTree = message.fileTree;
-                }
-                if (fileTree) {
-                    patchExpressPortInFileTree(fileTree); // Patch before mounting
-                    patchPackageJsonStartScript(fileTree); // Patch start script
-                    patchStaticFrontendProject(fileTree); // Patch static frontend
+
+                if (message.fileTree) {
+                    patchExpressPortInFileTree(message.fileTree); // Patch before mounting
+                    patchPackageJsonStartScript(message.fileTree); // Patch start script
+                    patchStaticFrontendProject(message.fileTree); // Patch static frontend
+
                     // Get the latest webContainer instance
                     if (!currentWebContainer) {
                         currentWebContainer = await getWebContainer();
@@ -247,9 +239,8 @@ const Project = () => {
                     }
 
                     if (currentWebContainer) {
-                        await currentWebContainer.mount(fileTree);
-                        setFileTree(fileTree);
-                        console.log("Updated fileTree:", fileTree); // <-- Debug log
+                        await currentWebContainer.mount(message.fileTree);
+                        setFileTree(message.fileTree);
                     } else {
                         console.error('WebContainer not initialized');
                     }
@@ -352,7 +343,7 @@ const Project = () => {
             if (node.directory) {
                 return (
                     <div key={path} style={{ marginLeft: `${depth * 20}px` }}>
-                        <div 
+                        <div
                             className="flex items-center gap-2 py-1 px-2 hover:bg-slate-700/50 rounded cursor-pointer"
                             onClick={() => toggleFolder(path)}
                         >
@@ -364,7 +355,7 @@ const Project = () => {
                 );
             } else if (node.file) {
                 return (
-                    <div 
+                    <div
                         key={path}
                         className={`flex items-center gap-2 py-1 px-2 hover:bg-slate-700/50 rounded cursor-pointer ${currentFile === path ? 'bg-slate-700/50' : ''}`}
                         style={{ marginLeft: `${depth * 20}px` }}
@@ -403,13 +394,13 @@ const Project = () => {
                 await currentProcess.kill();
                 setCurrentProcess(null);
             }
-            
+
             setContainerStatus('idle');
             setStatusMessage('');
             setIframeUrl(null);
             setOutputLogs([]);
             setActiveTab('preview');
-            
+
             if (webContainer) {
                 await webContainer.mount({});
             }
@@ -432,7 +423,7 @@ const Project = () => {
             setContainerStatus('installing');
             setStatusMessage('Setting up environment...');
             setOutputLogs(prev => [...prev, 'Setting up environment...']);
-            
+
             // First mount the file tree
             await webContainer?.mount(fileTree);
 
@@ -440,7 +431,7 @@ const Project = () => {
             setStatusMessage('Installing dependencies...');
             setOutputLogs(prev => [...prev, 'Installing dependencies...']);
             const installProcess = await webContainer?.spawn('npm', ['install']);
-            
+
             if (installProcess && installProcess.output) {
                 installProcess.output.pipeTo(new WritableStream({
                     write(chunk) {
@@ -448,7 +439,7 @@ const Project = () => {
                         setOutputLogs(prev => [...prev, chunk]);
                     }
                 }));
-                
+
                 setCurrentProcess(installProcess);
                 await installProcess.exit;
             } else {
@@ -462,12 +453,12 @@ const Project = () => {
             setStatusMessage('Starting server...');
             setOutputLogs(prev => [...prev, 'Starting server...']);
 
-            if(currentProcess){
+            if (currentProcess) {
                 currentProcess.kill()
             }
-            
+
             const tempRunProcess = await webContainer?.spawn('npm', ['start']);
-            
+
             if (tempRunProcess && tempRunProcess.output) {
                 tempRunProcess.output.pipeTo(new WritableStream({
                     write(chunk) {
@@ -475,7 +466,7 @@ const Project = () => {
                         setOutputLogs(prev => [...prev, chunk]);
                     }
                 }));
-                
+
                 setCurrentProcess(tempRunProcess);
 
                 webContainer.on('server-ready', (port, url) => {
@@ -497,27 +488,6 @@ const Project = () => {
             setCurrentProcess(null);
         }
     };
-
-    // Helper to extract JSON from code blocks in markdown
-    function extractJsonFromCodeBlock(text) {
-        // Match ```json ... ``` or ``` ... ```
-        const codeBlockMatch = text.match(/```(?:json)?([\s\S]*?)```/i);
-        if (codeBlockMatch) {
-            try {
-                return JSON.parse(codeBlockMatch[1]);
-            } catch (e) {
-                // Ignore parse error
-            }
-        }
-        // Try to find first { ... } block
-        const jsonMatch = text.match(/({[\s\S]*})/);
-        if (jsonMatch) {
-            try {
-                return JSON.parse(jsonMatch[1]);
-            } catch (e) {}
-        }
-        return null;
-    }
 
     // Helper to patch Express server files to use process.env.PORT
     function patchExpressPortInFileTree(tree) {
@@ -589,7 +559,7 @@ const Project = () => {
                     if (!pkg.devDependencies) pkg.devDependencies = {};
                     pkg.devDependencies['live-server'] = '^1.2.2';
                     tree['package.json'].file.contents = JSON.stringify(pkg, null, 2);
-                } catch (e) {}
+                } catch (e) { }
             }
         }
         // Recurse into directories
@@ -848,11 +818,11 @@ const Project = () => {
                                 onClick={handleRunServer}
                                 className={`
                                     relative flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200
-                                    ${containerStatus === 'running' 
-                                        ? 'bg-green-600 hover:bg-green-700' 
+                                    ${containerStatus === 'running'
+                                        ? 'bg-green-600 hover:bg-green-700'
                                         : containerStatus === 'error'
-                                        ? 'bg-red-600 hover:bg-red-700'
-                                        : 'bg-blue-600 hover:bg-blue-700'
+                                            ? 'bg-red-600 hover:bg-red-700'
+                                            : 'bg-blue-600 hover:bg-blue-700'
                                     }
                                     text-white font-medium shadow-lg hover:shadow-xl
                                     disabled:opacity-50 disabled:cursor-not-allowed
@@ -871,10 +841,10 @@ const Project = () => {
                                     )}
                                     <span>
                                         {containerStatus === 'installing' ? 'Installing...' :
-                                         containerStatus === 'starting' ? 'Starting...' :
-                                         containerStatus === 'running' ? 'Running' :
-                                         containerStatus === 'error' ? 'Error' :
-                                         'Run'}
+                                            containerStatus === 'starting' ? 'Starting...' :
+                                                containerStatus === 'running' ? 'Running' :
+                                                    containerStatus === 'error' ? 'Error' :
+                                                        'Run'}
                                     </span>
                                 </div>
                                 {statusMessage && (
@@ -979,15 +949,15 @@ const Project = () => {
                 {iframeUrl && webContainer &&
                     (<div className="flex min-w-96 flex-col h-full">
                         <div className="address-bar">
-                            
-                            <input type="text" 
-                                onChange={(e)=>setIframeUrl(e.target.value)}
+
+                            <input type="text"
+                                onChange={(e) => setIframeUrl(e.target.value)}
                                 value={iframeUrl} className='w-full p-2 px-4 bg-slate-400'
                             />
                         </div>
                         <iframe src={iframeUrl} className='w-1//2 h-full'></iframe>
                     </div>
-                )}
+                    )}
 
             </section>
         </main>
