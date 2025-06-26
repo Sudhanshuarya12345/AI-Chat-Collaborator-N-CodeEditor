@@ -220,61 +220,62 @@ const Project = () => {
         let currentWebContainer = null;
         recieveMessage('project-message', async data => {
             try {
-                console.log('Received message:', data.message);
                 let message;
                 let fileTree = null;
-                
-                // First try to parse as direct JSON
+                // --- DEBUG LOGGING ---
+                console.log("Raw socket message:", data.message);
                 try {
+                    // Try direct JSON parse
                     message = JSON.parse(data.message);
-                    console.log('Parsed as JSON:', message);
+                    if (message && message.fileTree) {
+                        fileTree = message.fileTree;
+                    }
                 } catch (e) {
-                    console.log('Failed to parse as JSON, trying code block extraction');
-                    message = data.message;
-                    // Try to extract JSON from code block if not valid JSON
+                    // Try extracting JSON from code block
                     const extracted = extractJsonFromCodeBlock(data.message);
                     if (extracted && extracted.fileTree) {
                         fileTree = extracted.fileTree;
-                        console.log('Extracted fileTree from code block:', fileTree);
+                    } else {
+                        // Try parsing as stringified object with fileTree
+                        try {
+                            const possibleObj = JSON.parse(data.message);
+                            if (possibleObj && possibleObj.fileTree) {
+                                fileTree = possibleObj.fileTree;
+                            }
+                        } catch (err) {
+                            // Not JSON, fallback
+                            fileTree = null;
+                        }
                     }
                 }
-                
-                // If message is an object and has fileTree
-                if (!fileTree && message && typeof message === 'object' && message.fileTree) {
+                // Fallback: if message is an object and has fileTree
+                if (!fileTree && typeof message === 'object' && message.fileTree) {
                     fileTree = message.fileTree;
-                    console.log('Found fileTree in message object:', fileTree);
                 }
-                
+                // --- END DEBUG LOGGING ---
+                console.log("Extracted fileTree:", fileTree);
                 if (fileTree) {
-                    console.log('Processing fileTree update...');
                     patchExpressPortInFileTree(fileTree); // Patch before mounting
                     patchPackageJsonStartScript(fileTree); // Patch start script
                     patchStaticFrontendProject(fileTree); // Patch static frontend
-                    
                     // Get the latest webContainer instance
                     if (!currentWebContainer) {
-                        console.log('Initializing WebContainer...');
                         currentWebContainer = await getWebContainer();
                         setWebContainer(currentWebContainer);
                     }
 
                     if (currentWebContainer) {
-                        console.log('Mounting fileTree to WebContainer...');
                         await currentWebContainer.mount(fileTree);
                         setFileTree(fileTree);
-                        console.log("Successfully updated fileTree:", fileTree);
+                        console.log("Updated fileTree:", fileTree); // <-- Debug log
                     } else {
                         console.error('WebContainer not initialized');
                     }
-                } else {
-                    console.log('No fileTree found in message');
                 }
 
                 setMessages(prevMessages => [...prevMessages, { ...data, type: 'incoming' }]);
             } catch (error) {
                 console.error('Error processing message:', error);
-                // Still add the message to chat even if file tree processing fails
-                setMessages(prevMessages => [...prevMessages, { ...data, type: 'incoming' }]);
             }
         });
 
