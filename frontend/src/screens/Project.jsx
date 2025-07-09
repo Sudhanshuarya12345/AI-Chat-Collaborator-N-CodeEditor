@@ -151,16 +151,36 @@ const Project = () => {
 
     // Add file operations handlers
     const handleCreateFile = () => {
-        if (!newFileName) return;
-        const fileName = newFileName.endsWith('.js') ? newFileName : `${newFileName}.js`;
+        if (!newFileName.trim()) return;
+        
+        // Determine file extension based on input
+        let fileName = newFileName.trim();
+        if (!fileName.includes('.')) {
+            fileName = `${fileName}.js`; // Default to .js if no extension
+        }
+        
+        // Create the new file
+        const newFile = {
+            file: {
+                contents: '// Start coding here...\n'
+            }
+        };
+        
         setFileTree(prev => ({
             ...prev,
-            [fileName]: {
-                file: {
-                    contents: '// Start coding here...'
-                }
-            }
+            [fileName]: newFile
         }));
+        
+        // Update WebContainer if available
+        if (webContainer) {
+            webContainer.mount({
+                ...fileTree,
+                [fileName]: newFile
+            }).catch(error => {
+                console.error('Failed to mount new file to WebContainer:', error);
+            });
+        }
+        
         setNewFileName('');
         setIsCreatingFile(false);
         setCurrentFile(fileName);
@@ -173,6 +193,10 @@ const Project = () => {
             const remainingFiles = openFiles.filter(f => f !== fileName);
             setCurrentFile(remainingFiles[remainingFiles.length - 1] || null);
         }
+        
+        // Note: We don't remove the file from fileTree or WebContainer
+        // as it might still be needed by the running application
+        // Users can delete files through the file explorer if needed
     };
 
     // Add keyboard shortcuts
@@ -377,14 +401,26 @@ const Project = () => {
 
     // Helper to resolve a file node by its path (e.g., 'backend/server.js')
     const getFileNodeByPath = (tree, path) => {
-        if (!path) return null;
+        if (!path || !tree) return null;
         const parts = path.split('/');
         let node = tree;
+        
         for (let part of parts) {
-            if (!node) return null;
-            node = node[part]?.contents || node[part]?.file || node[part];
+            if (!node || !node[part]) return null;
+            node = node[part];
         }
-        return node && node.contents === undefined ? node : node.file || node;
+        
+        // Return the file contents if it's a file node
+        if (node.file) {
+            return node.file;
+        }
+        
+        // Return the node itself if it has contents (direct file)
+        if (node.contents !== undefined) {
+            return node;
+        }
+        
+        return null;
     };
 
     // Add cleanup function
@@ -766,8 +802,11 @@ const Project = () => {
                     </div>
                     {/* File Tree (recursive) */}
                     <div className="flex-grow overflow-y-auto p-2 space-y-1">
-                        {Object.keys(fileTree).length === 0 ? (
-                            <div className="text-slate-400 text-center">No files found.</div>
+                        {!fileTree || Object.keys(fileTree).length === 0 ? (
+                            <div className="text-slate-400 text-center py-4">
+                                <div className="text-sm mb-2">No files found.</div>
+                                <div className="text-xs text-slate-500">Click the + button to create a new file</div>
+                            </div>
                         ) : (
                             renderFileTree(fileTree)
                         )}
@@ -853,97 +892,184 @@ const Project = () => {
                                     </div>
                                 )}
                             </button>
+                            
+                            {/* Close Server Button */}
+                            {(containerStatus === 'running' || containerStatus === 'error') && (
+                                <button
+                                    onClick={handleCloseServer}
+                                    className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-all duration-200 font-medium shadow-lg hover:shadow-xl"
+                                >
+                                    <i className="ri-stop-line text-lg" />
+                                    <span>Stop</span>
+                                </button>
+                            )}
                         </div>
                     </div>
 
-                    {/* Editor Area */}
-                    <div className="flex-grow flex w-full h-full bg-slate-900/80 rounded-2xl shadow-xl border border-slate-700/60 overflow-hidden">
-                        {/* Line Numbers */}
-                        <div
-                            ref={lineNumberRef}
-                            className="line-numbers bg-slate-800/70 border-r border-slate-700/50 text-slate-500 text-sm font-mono select-none overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                            style={{
-                                width: '3rem',
-                                userSelect: 'none',
-                                textAlign: 'right',
-                                height: '100%',
-                                position: 'relative',
-                                background: 'linear-gradient(90deg, #1e293b 90%, #334155 100%)',
-                                lineHeight: '1.5em',
-                                fontSize: '14px'
-                            }}
-                        >
-                            {getFileNodeByPath(fileTree, currentFile)?.contents?.split('\n').map((_, i) => (
-                                <div
-                                    key={i}
-                                    style={{
-                                        height: '1.5em',
-                                        lineHeight: '1.5em',
-                                        transition: 'background 0.2s',
-                                        padding: '0 0.5rem'
-                                    }}
-                                    className={`${activeLine === i + 1 ? 'bg-blue-900/40 text-blue-300 font-bold' : 'hover:bg-slate-700/40'}`}
-                                >
-                                    {i + 1}
+                    {/* Output Logs Tabs */}
+                    {(containerStatus === 'installing' || containerStatus === 'starting' || containerStatus === 'running' || containerStatus === 'error') && (
+                        <div className="flex border-b border-slate-800 bg-slate-800/50">
+                            <button
+                                onClick={() => setActiveTab('preview')}
+                                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                                    activeTab === 'preview' 
+                                        ? 'text-blue-300 border-b-2 border-blue-500' 
+                                        : 'text-slate-400 hover:text-slate-300'
+                                }`}
+                            >
+                                Preview
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('output')}
+                                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                                    activeTab === 'output' 
+                                        ? 'text-blue-300 border-b-2 border-blue-500' 
+                                        : 'text-slate-400 hover:text-slate-300'
+                                }`}
+                            >
+                                Output Logs
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Output Logs Display */}
+                    {activeTab === 'output' && (containerStatus === 'installing' || containerStatus === 'starting' || containerStatus === 'running' || containerStatus === 'error') && (
+                        <div className="flex-grow bg-slate-900 p-4 overflow-y-auto">
+                            <div className="bg-slate-800 rounded-lg p-4 h-full">
+                                <div className="text-sm font-mono text-slate-200 whitespace-pre-wrap">
+                                    {outputLogs.length === 0 ? (
+                                        <span className="text-slate-500">No output logs yet...</span>
+                                    ) : (
+                                        outputLogs.map((log, index) => (
+                                            <div key={index} className="mb-1">
+                                                {log}
+                                            </div>
+                                        ))
+                                    )}
                                 </div>
-                            ))}
+                            </div>
                         </div>
-                        {/* Code Editor */}
-                        <div
-                            className="flex-grow h-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                            style={{ position: 'relative' }}
-                        >
-                            <textarea
-                                ref={textareaRef}
-                                className="w-full h-full min-h-0 px-4 py-4 border-none outline-none font-mono text-sm bg-transparent text-slate-200 resize-none focus:ring-0 focus:outline-none"
-                                value={getFileNodeByPath(fileTree, currentFile)?.contents || ''}
-                                onChange={(e) => {
-                                    // Update the nested fileTree immutably
-                                    const updateTree = (tree, pathArr, value) => {
-                                        if (pathArr.length === 1) {
-                                            if (tree[pathArr[0]]?.file) {
-                                                return { ...tree, [pathArr[0]]: { ...tree[pathArr[0]], file: { ...tree[pathArr[0]].file, contents: value } } };
-                                            } else if (tree[pathArr[0]]) {
-                                                return { ...tree, [pathArr[0]]: { ...tree[pathArr[0]], contents: value } };
-                                            }
-                                            return tree;
-                                        }
-                                        const [head, ...rest] = pathArr;
-                                        return {
-                                            ...tree,
-                                            [head]: {
-                                                ...tree[head],
-                                                contents: updateTree(tree[head].contents || tree[head], rest, value)
-                                            }
-                                        };
-                                    };
-                                    setFileTree(prev => updateTree(prev, currentFile.split('/'), e.target.value));
-                                    updateActiveLine();
-                                }}
-                                spellCheck="false"
+                    )}
+
+                    {/* Editor Area - Only show when not viewing output logs */}
+                    {activeTab !== 'output' && (
+                        <div className="flex-grow flex w-full h-full bg-slate-900/80 rounded-2xl shadow-xl border border-slate-700/60 overflow-hidden">
+                            {/* Line Numbers */}
+                            <div
+                                ref={lineNumberRef}
+                                className="line-numbers bg-slate-800/70 border-r border-slate-700/50 text-slate-500 text-sm font-mono select-none overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                                 style={{
-                                    lineHeight: '1.5em',
-                                    tabSize: 4,
-                                    fontFamily: 'Fira Mono, Menlo, Monaco, Consolas, monospace',
+                                    width: '3rem',
+                                    userSelect: 'none',
+                                    textAlign: 'right',
                                     height: '100%',
-                                    minHeight: 0,
-                                    resize: 'none',
-                                    overflow: 'auto',
-                                    background: 'transparent',
-                                    fontSize: '14px',
-                                    padding: '0.5rem'
+                                    position: 'relative',
+                                    background: 'linear-gradient(90deg, #1e293b 90%, #334155 100%)',
+                                    lineHeight: '1.5em',
+                                    fontSize: '14px'
                                 }}
-                                onScroll={handleEditorScroll}
-                                onClick={updateActiveLine}
-                                onKeyUp={updateActiveLine}
-                            />
-                            <style>{`
-                                .line-numbers > div.bg-blue-900\/40 {
-                                    border-left: 3px solid #3b82f6;
-                                }
-                            `}</style>
+                            >
+                                {currentFile && getFileNodeByPath(fileTree, currentFile)?.contents?.split('\n').map((_, i) => (
+                                    <div
+                                        key={i}
+                                        style={{
+                                            height: '1.5em',
+                                            lineHeight: '1.5em',
+                                            transition: 'background 0.2s',
+                                            padding: '0 0.5rem'
+                                        }}
+                                        className={`${activeLine === i + 1 ? 'bg-blue-900/40 text-blue-300 font-bold' : 'hover:bg-slate-700/40'}`}
+                                    >
+                                        {i + 1}
+                                    </div>
+                                ))}
+                            </div>
+                            {/* Code Editor */}
+                            <div
+                                className="flex-grow h-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                                style={{ position: 'relative' }}
+                            >
+                                <textarea
+                                    ref={textareaRef}
+                                    className="w-full h-full min-h-0 px-4 py-4 border-none outline-none font-mono text-sm bg-transparent text-slate-200 resize-none focus:ring-0 focus:outline-none"
+                                    value={currentFile ? (getFileNodeByPath(fileTree, currentFile)?.contents || '') : ''}
+                                    onChange={(e) => {
+                                        // Update the nested fileTree immutably
+                                        const updateTree = (tree, pathArr, value) => {
+                                            if (pathArr.length === 1) {
+                                                const fileName = pathArr[0];
+                                                if (tree[fileName]?.file) {
+                                                    return { 
+                                                        ...tree, 
+                                                        [fileName]: { 
+                                                            ...tree[fileName], 
+                                                            file: { 
+                                                                ...tree[fileName].file, 
+                                                                contents: value 
+                                                            } 
+                                                        } 
+                                                    };
+                                                } else if (tree[fileName] && tree[fileName].contents !== undefined) {
+                                                    return { 
+                                                        ...tree, 
+                                                        [fileName]: { 
+                                                            ...tree[fileName], 
+                                                            contents: value 
+                                                        } 
+                                                    };
+                                                }
+                                                return tree;
+                                            }
+                                            const [head, ...rest] = pathArr;
+                                            if (!tree[head]) return tree;
+                                            
+                                            return {
+                                                ...tree,
+                                                [head]: {
+                                                    ...tree[head],
+                                                    directory: updateTree(tree[head].directory || {}, rest, value)
+                                                }
+                                            };
+                                        };
+                                        setFileTree(prev => {
+                                            const updatedTree = updateTree(prev, currentFile.split('/'), e.target.value);
+                                            
+                                            // Sync with WebContainer if available
+                                            if (webContainer) {
+                                                webContainer.mount(updatedTree).catch(error => {
+                                                    console.error('Failed to sync file tree with WebContainer:', error);
+                                                });
+                                            }
+                                            
+                                            return updatedTree;
+                                        });
+                                        updateActiveLine();
+                                    }}
+                                    spellCheck="false"
+                                    style={{
+                                        lineHeight: '1.5em',
+                                        tabSize: 4,
+                                        fontFamily: 'Fira Mono, Menlo, Monaco, Consolas, monospace',
+                                        height: '100%',
+                                        minHeight: 0,
+                                        resize: 'none',
+                                        overflow: 'auto',
+                                        background: 'transparent',
+                                        fontSize: '14px',
+                                        padding: '0.5rem'
+                                    }}
+                                    onScroll={handleEditorScroll}
+                                    onClick={updateActiveLine}
+                                    onKeyUp={updateActiveLine}
+                                />
+                                <style>{`
+                                    .line-numbers > div.bg-blue-900\/40 {
+                                        border-left: 3px solid #3b82f6;
+                                    }
+                                `}</style>
+                            </div>
                         </div>
-                    </div>
+                    )}
                 </div>
 
                 {iframeUrl && webContainer &&
@@ -960,6 +1086,68 @@ const Project = () => {
                     )}
 
             </section>
+
+            {/* File Creation Modal */}
+            {isCreatingFile && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+                    <div className="bg-slate-800 rounded-2xl shadow-2xl p-8 w-full max-w-md border border-slate-700">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-xl font-bold text-blue-300">Create New File</h2>
+                            <button 
+                                onClick={() => {
+                                    setIsCreatingFile(false);
+                                    setNewFileName('');
+                                }} 
+                                className="text-slate-400 hover:text-slate-200 transition p-2 hover:bg-slate-700 rounded-lg"
+                            >
+                                <i className="ri-close-line text-2xl"></i>
+                            </button>
+                        </div>
+                        <div className="mb-6">
+                            <label className="block text-sm font-medium text-slate-300 mb-2">
+                                File Name
+                            </label>
+                            <input
+                                type="text"
+                                value={newFileName}
+                                onChange={(e) => setNewFileName(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        handleCreateFile();
+                                    } else if (e.key === 'Escape') {
+                                        setIsCreatingFile(false);
+                                        setNewFileName('');
+                                    }
+                                }}
+                                className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="Enter file name (e.g., app.js)"
+                                autoFocus
+                            />
+                            <p className="text-xs text-slate-400 mt-2">
+                                Press Enter to create, Escape to cancel
+                            </p>
+                        </div>
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={() => {
+                                    setIsCreatingFile(false);
+                                    setNewFileName('');
+                                }}
+                                className="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded-lg transition"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleCreateFile}
+                                className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg shadow transition"
+                                disabled={!newFileName.trim()}
+                            >
+                                Create File
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </main>
     )
 }
