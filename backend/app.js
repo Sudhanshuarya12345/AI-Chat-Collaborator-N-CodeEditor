@@ -12,7 +12,10 @@ connect();
 
 const app = express();
 
-app.use(cors()) // middleware for enabling CORS
+app.use(cors({
+  origin: process.env.FRONTEND_ORIGIN || 'https://ai-chat-collaborator-n-code-editor.vercel.app',
+  credentials: true,
+})) // middleware for enabling CORS
 
 app.use(morgan('dev'))
 
