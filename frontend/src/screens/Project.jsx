@@ -85,12 +85,15 @@ const Project = () => {
     }
 
     const send = () => {
+        const trimmedMessage = message.trim();
+        if (!trimmedMessage) return;
+
         sendMessage('project-message', {
-            message,
+            message: trimmedMessage,
             sender: user,
         })
         setMessages(prevMessages => [...prevMessages, {
-            message,
+            message: trimmedMessage,
             sender: user,
             type: 'outgoing',
         }])
@@ -877,7 +880,7 @@ const Project = () => {
                                     onChange={(e) => setMessage(e.target.value)}
                                     onKeyDown={(e) => { if (e.key === 'Enter') send() }}
                                     className="flex-grow px-4 py-3 rounded-l-xl border border-slate-700 outline-none focus:ring-2 focus:ring-blue-400 bg-slate-800 text-blue-100 shadow focus:bg-slate-900 transition"
-                                    type="text" placeholder="Enter message"
+                                    type="text" placeholder="To ask ai Start your message with @ai"
                                 />
                                 <button
                                     onClick={send}

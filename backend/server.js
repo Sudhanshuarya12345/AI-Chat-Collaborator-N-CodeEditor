@@ -6,6 +6,7 @@ import jwt from 'jsonwebtoken'
 import mongoose from 'mongoose'
 import projectModal from './models/project.model.js'
 import chatModel from './models/chat.model.js'
+import userModel from './models/user.model.js'
 import { generateResult } from './services/ai.service.js'
 dotenv.config()
 
@@ -42,7 +43,7 @@ io.use( async(socket, next) => {
             return next(new Error('Authentication error'));
         }
 
-        socket.userId = decoded;
+        socket.user = decoded;
         next();
     }
     catch(err){
@@ -68,25 +69,54 @@ io.on('connection', (socket) => {
         });
 
     socket.on('project-message', async (data) => {
-        const aiIsPresentInMessage = data.message.toLowerCase().includes('@ai');
+        const rawMessage = data?.message ?? '';
+        const trimmedMessage = rawMessage.trim();
+        const aiMessageStartsWithTag = /^@ai\b/i.test(trimmedMessage);
         
         try {
+            const senderEmail = data?.sender?.email || socket.user?.email;
+            let senderId = data?.sender?._id || socket.user?._id;
+
+            if (!senderId && senderEmail) {
+                const senderUser = await userModel.findOne({ email: senderEmail }).select('_id email');
+                if (senderUser) {
+                    senderId = senderUser._id;
+                }
+            }
+
+            if (!senderId || !senderEmail) {
+                throw new Error('Sender identity is missing for this message. Please login again.');
+            }
+
             // Save the user message to database
             const chatMessage = new chatModel({
                 projectId: socket.project._id,
-                message: data.message,
+                message: rawMessage,
                 sender: {
-                    _id: data.sender._id,
-                    email: data.sender.email,
+                    _id: senderId,
+                    email: senderEmail,
                     type: 'user'
                 }
             });
             await chatMessage.save();
             
-            socket.broadcast.to(socket.roomId).emit('project-message', data);
+            socket.broadcast.to(socket.roomId).emit('project-message', {
+                ...data,
+                message: rawMessage,
+                sender: {
+                    _id: senderId,
+                    email: senderEmail,
+                    type: 'user'
+                }
+            });
             
-            if(aiIsPresentInMessage){
-                const prompt = data.message.replace('@ai', '');
+            if(aiMessageStartsWithTag){
+                const prompt = trimmedMessage.replace(/^@ai\b/i, '').trim();
+
+                if (!prompt) {
+                    return;
+                }
+
                 const result = await generateResult(prompt);
                 
                 // Save AI response to database without _id
@@ -110,6 +140,17 @@ io.on('connection', (socket) => {
             }
         } catch (err) {
             console.error('Error saving message:', err);
+
+            // Send a visible error response so the user understands why no AI answer arrived.
+            io.to(socket.roomId).emit('project-message', {
+                message: JSON.stringify({
+                    text: 'AI could not respond right now. Please try again in a moment.',
+                }),
+                sender: {
+                    email: 'AI',
+                    type: 'ai'
+                }
+            });
         }
     });
     
