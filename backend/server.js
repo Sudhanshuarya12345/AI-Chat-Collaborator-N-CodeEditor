@@ -117,34 +117,50 @@ io.on('connection', (socket) => {
                     return;
                 }
 
-                const result = await generateResult(prompt);
-                
-                // Save AI response to database without _id
-                const aiMessage = new chatModel({
-                    projectId: socket.project._id,
-                    message: result,
-                    sender: {
-                        email: 'AI',
-                        type: 'ai'
-                    }
-                });
-                await aiMessage.save();
+                try {
+                    const result = await generateResult(prompt);
+                    
+                    // Save AI response to database without _id
+                    const aiMessage = new chatModel({
+                        projectId: socket.project._id,
+                        message: result,
+                        sender: {
+                            email: 'AI',
+                            type: 'ai'
+                        }
+                    });
+                    await aiMessage.save();
 
-                io.to(socket.roomId).emit('project-message', {
-                    message: result,
-                    sender: {
-                        email: 'AI',
-                        type: 'ai'
-                    }
-                });
+                    io.to(socket.roomId).emit('project-message', {
+                        message: result,
+                        sender: {
+                            email: 'AI',
+                            type: 'ai'
+                        }
+                    });
+                } catch (aiError) {
+                    const isQuotaError = aiError?.status === 429 || /quota|too many requests/i.test(aiError?.message || '');
+                    const aiErrorMessage = isQuotaError
+                        ? 'AI quota limit reached for the current API key. Please enable billing or use a key with available quota, then try again.'
+                        : 'AI could not respond right now. Please try again in a moment.';
+
+                    console.error('AI response generation failed:', aiError);
+
+                    io.to(socket.roomId).emit('project-message', {
+                        message: JSON.stringify({ text: aiErrorMessage }),
+                        sender: {
+                            email: 'AI',
+                            type: 'ai'
+                        }
+                    });
+                }
             }
         } catch (err) {
-            console.error('Error saving message:', err);
+            console.error('Error processing user message:', err);
 
-            // Send a visible error response so the user understands why no AI answer arrived.
             io.to(socket.roomId).emit('project-message', {
                 message: JSON.stringify({
-                    text: 'AI could not respond right now. Please try again in a moment.',
+                    text: 'Message could not be processed. Please refresh and try again.',
                 }),
                 sender: {
                     email: 'AI',
