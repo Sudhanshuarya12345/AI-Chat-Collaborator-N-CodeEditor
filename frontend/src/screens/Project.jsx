@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, Link } from 'react-router-dom'
 import axios from '../config/axios.js'
 import { initializeSocket, recieveMessage, sendMessage } from '../config/socket.js'
 import { UserContext } from '../context/user.context.jsx'
@@ -7,9 +7,6 @@ import Markdown from 'markdown-to-jsx'
 import { RiFolder3Line, RiFolderOpenLine, RiFile3Line, RiAddLine } from 'react-icons/ri'
 import { getWebContainer } from '../config/webContainer.js'
 
-
-// function SyntaxHighlightedCode(props){
-// }
 
 const Project = () => {
     const location = useLocation()
@@ -21,7 +18,10 @@ const Project = () => {
     const [project, setProject] = useState(location.state.project)
     const [message, setMessage] = useState('') // <-- Store messages data
     const [messages, setMessages] = useState([]) // <-- NEW STATE for messages
-    const [copiedStatus, setCopiedStatus] = useState(false);  // <-- NEW STATE for copied status
+    const [aidatacopiedStatus, setaidataCopiedStatus] = useState(false);  // <-- NEW STATE for ai response copied status
+    const [logscopiedStatus, setlogsCopiedStatus] = useState(false);  // <-- NEW STATE for logs copied status
+    const [opcopiedStatus, setopCopiedStatus] = useState(false);  // <-- NEW STATE for output copied status
+    const [clearStatus, setClearStatus] = useState(false);  // <-- NEW STATE for copied status
     const [fileTree, setFileTree] = useState({}) // <-- NEW STATE for file tree
     const [currentFile, setCurrentFile] = useState(null)
     const [openFiles, setOpenFiles] = useState([])
@@ -31,6 +31,9 @@ const Project = () => {
     const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
     const [newFileName, setNewFileName] = useState('');
     const [isCreatingFile, setIsCreatingFile] = useState(false);
+    const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+    const [newFolderName, setNewFolderName] = useState('');
+    const [selectedFolderPath, setSelectedFolderPath] = useState(''); // Track which folder is selected for file creation
     const [expandedFolders, setExpandedFolders] = useState({});
 
     const { user } = useContext(UserContext)
@@ -50,6 +53,10 @@ const Project = () => {
     const [outputLogs, setOutputLogs] = useState([]) // Add this for output logs
     const [activeTab, setActiveTab] = useState('preview') // 'preview' | 'output'
 
+    // Add state for output modal
+    const [isOutputModalOpen, setIsOutputModalOpen] = useState(false);
+    // Feedback states for output modal buttons
+    const [reloadedStatus, setReloadedStatus] = useState(false);
 
     const handleUserClick = (id) => {
         setSelectedUserId(prevSelectedUserId => {
@@ -112,14 +119,14 @@ const Project = () => {
                     <button
                         onClick={() => {
                             navigator.clipboard.writeText(messageObject.text);
-                            setCopiedStatus(true);
-                            setTimeout(() => setCopiedStatus(false), 1000);
+                            setaidataCopiedStatus(true);
+                            setTimeout(() => setaidataCopiedStatus(false), 1000);
                         }}
                         className='text-xs bg-slate-700/50 hover:bg-slate-600/50 px-2 py-1 rounded text-blue-300 transition flex items-center gap-1'
-                        title={copiedStatus ? "Copied!" : "Copy to clipboard"}
+                        title={aidatacopiedStatus ? "Copied!" : "Copy to clipboard"}
                     >
-                        <i className={copiedStatus ? 'ri-check-line' : 'ri-clipboard-fill'}></i>
-                        <span>{copiedStatus ? 'Copied' : 'Copy'}</span>
+                        <i className={aidatacopiedStatus ? 'ri-check-line' : 'ri-clipboard-fill'}></i>
+                        <span>{aidatacopiedStatus ? 'Copied' : 'Copy'}</span>
                     </button>
                 </div>
 
@@ -152,39 +159,165 @@ const Project = () => {
     // Add file operations handlers
     const handleCreateFile = () => {
         if (!newFileName.trim()) return;
-        
+
         // Determine file extension based on input
         let fileName = newFileName.trim();
         if (!fileName.includes('.')) {
             fileName = `${fileName}.js`; // Default to .js if no extension
         }
-        
+
         // Create the new file
         const newFile = {
             file: {
                 contents: '// Start coding here...\n'
             }
         };
-        
-        setFileTree(prev => ({
-            ...prev,
-            [fileName]: newFile
-        }));
-        
-        // Update WebContainer if available
-        if (webContainer) {
-            webContainer.mount({
-                ...fileTree,
-                [fileName]: newFile
-            }).catch(error => {
-                console.error('Failed to mount new file to WebContainer:', error);
+
+        // If we have a selected folder, create the file inside that folder
+        if (selectedFolderPath) {
+            setFileTree(prev => {
+                const updateTree = (tree, pathArr, newFile) => {
+                    if (pathArr.length === 1) {
+                        const folderName = pathArr[0];
+                        if (tree[folderName]?.directory) {
+                            return {
+                                ...tree,
+                                [folderName]: {
+                                    ...tree[folderName],
+                                    directory: {
+                                        ...tree[folderName].directory,
+                                        [fileName]: newFile
+                                    }
+                                }
+                            };
+                        }
+                        return tree;
+                    }
+                    const [head, ...rest] = pathArr;
+                    if (!tree[head]) return tree;
+                    
+                    return {
+                        ...tree,
+                        [head]: {
+                            ...tree[head],
+                            directory: updateTree(tree[head].directory || {}, rest, newFile)
+                        }
+                    };
+                };
+
+                const updatedTree = updateTree(prev, selectedFolderPath.split('/'), newFile);
+                
+                // Update WebContainer if available
+                if (webContainer) {
+                    webContainer.mount(updatedTree).catch(error => {
+                        console.error('Failed to mount new file to WebContainer:', error);
+                    });
+                }
+                
+                return updatedTree;
             });
+
+            const fullFilePath = `${selectedFolderPath}/${fileName}`;
+            setCurrentFile(fullFilePath);
+            setOpenFiles(prev => [...new Set([...prev, fullFilePath])]);
+        } else {
+            // Create file in root directory
+            setFileTree(prev => ({
+                ...prev,
+                [fileName]: newFile
+            }));
+
+            // Update WebContainer if available
+            if (webContainer) {
+                webContainer.mount({
+                    ...fileTree,
+                    [fileName]: newFile
+                }).catch(error => {
+                    console.error('Failed to mount new file to WebContainer:', error);
+                });
+            }
+
+            setCurrentFile(fileName);
+            setOpenFiles(prev => [...new Set([...prev, fileName])]);
         }
-        
+
         setNewFileName('');
         setIsCreatingFile(false);
-        setCurrentFile(fileName);
-        setOpenFiles(prev => [...new Set([...prev, fileName])]);
+        setSelectedFolderPath(''); // Reset selected folder
+    };
+
+    const handleCreateFolder = () => {
+        if (!newFolderName.trim()) return;
+
+        const folderName = newFolderName.trim();
+        const newFolder = {
+            directory: {}
+        };
+
+        // If we have a selected folder, create the folder inside that folder
+        if (selectedFolderPath) {
+            setFileTree(prev => {
+                const updateTree = (tree, pathArr, newFolder) => {
+                    if (pathArr.length === 1) {
+                        const parentFolderName = pathArr[0];
+                        if (tree[parentFolderName]?.directory) {
+                            return {
+                                ...tree,
+                                [parentFolderName]: {
+                                    ...tree[parentFolderName],
+                                    directory: {
+                                        ...tree[parentFolderName].directory,
+                                        [folderName]: newFolder
+                                    }
+                                }
+                            };
+                        }
+                        return tree;
+                    }
+                    const [head, ...rest] = pathArr;
+                    if (!tree[head]) return tree;
+                    
+                    return {
+                        ...tree,
+                        [head]: {
+                            ...tree[head],
+                            directory: updateTree(tree[head].directory || {}, rest, newFolder)
+                        }
+                    };
+                };
+
+                const updatedTree = updateTree(prev, selectedFolderPath.split('/'), newFolder);
+                
+                // Update WebContainer if available
+                if (webContainer) {
+                    webContainer.mount(updatedTree).catch(error => {
+                        console.error('Failed to mount new folder to WebContainer:', error);
+                    });
+                }
+                
+                return updatedTree;
+            });
+        } else {
+            // Create folder in root directory
+            setFileTree(prev => ({
+                ...prev,
+                [folderName]: newFolder
+            }));
+
+            // Update WebContainer if available
+            if (webContainer) {
+                webContainer.mount({
+                    ...fileTree,
+                    [folderName]: newFolder
+                }).catch(error => {
+                    console.error('Failed to mount new folder to WebContainer:', error);
+                });
+            }
+        }
+
+        setNewFolderName('');
+        setIsCreatingFolder(false);
+        setSelectedFolderPath(''); // Reset selected folder
     };
 
     const handleCloseFile = (fileName) => {
@@ -193,7 +326,7 @@ const Project = () => {
             const remainingFiles = openFiles.filter(f => f !== fileName);
             setCurrentFile(remainingFiles[remainingFiles.length - 1] || null);
         }
-        
+
         // Note: We don't remove the file from fileTree or WebContainer
         // as it might still be needed by the running application
         // Users can delete files through the file explorer if needed
@@ -368,11 +501,30 @@ const Project = () => {
                 return (
                     <div key={path} style={{ marginLeft: `${depth * 20}px` }}>
                         <div
-                            className="flex items-center gap-2 py-1 px-2 hover:bg-slate-700/50 rounded cursor-pointer"
+                            className="flex items-center gap-2 py-1 px-2 hover:bg-slate-700/50 rounded cursor-pointer group"
                             onClick={() => toggleFolder(path)}
+                            onContextMenu={(e) => {
+                                e.preventDefault();
+                                setSelectedFolderPath(path);
+                                setIsCreatingFile(true);
+                            }}
                         >
                             {isExpanded ? <RiFolderOpenLine className="text-yellow-500" /> : <RiFolder3Line className="text-yellow-500" />}
                             <span className="text-slate-200">{name}</span>
+                            {/* Context menu indicator */}
+                            <div className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedFolderPath(path);
+                                        setIsCreatingFile(true);
+                                    }}
+                                    className="p-1 hover:bg-slate-600/50 rounded text-slate-400 hover:text-blue-400"
+                                    title="Create file in this folder"
+                                >
+                                    <i className="ri-add-line text-xs" />
+                                </button>
+                            </div>
                         </div>
                         {isExpanded && renderFileTree(node.directory, path, depth + 1)}
                     </div>
@@ -404,22 +556,22 @@ const Project = () => {
         if (!path || !tree) return null;
         const parts = path.split('/');
         let node = tree;
-        
+
         for (let part of parts) {
             if (!node || !node[part]) return null;
             node = node[part];
         }
-        
+
         // Return the file contents if it's a file node
         if (node.file) {
             return node.file;
         }
-        
+
         // Return the node itself if it has contents (direct file)
         if (node.contents !== undefined) {
             return node;
         }
-        
+
         return null;
     };
 
@@ -604,12 +756,37 @@ const Project = () => {
         }
     }
 
+    // Force stop handler
+    const handleForceStop = async () => {
+        try {
+            if (currentProcess) {
+                await currentProcess.kill();
+                setCurrentProcess(null);
+            }
+            setContainerStatus('idle');
+            setStatusMessage('Force stopped');
+            setIframeUrl(null);
+            setOutputLogs([]);
+            setActiveTab('preview');
+            if (webContainer) {
+                await webContainer.mount({});
+            }
+        } catch (error) {
+            setStatusMessage('Error during force stop: ' + error.message);
+        }
+    };
+
     return (
         <main className="h-screen min-h-screen w-screen flex bg-slate-900 text-slate-100">
             {/* Left Panel: Chat & Collaborators */}
             <section className="left relative flex flex-col h-full w-96 bg-gradient-to-br from-blue-900 via-slate-900 to-blue-800 shadow-2xl rounded-l-2xl border-r border-blue-900/70 backdrop-blur-md">
                 {/* Header Box */}
                 <header className="flex flex-col items-center p-4 w-full gap-2 bg-gradient-to-br from-blue-900 via-slate-900 to-blue-800 shadow-2xl rounded-l-2xl border-r border-blue-900/70 backdrop-blur-md">
+                    <div className="flex justify-start absolute left-1 top-1">
+                        <Link to="/" className="flex items-center gap-2 px-2 py-1 bg-blue-100 text-blue-500 rounded-full hover:bg-blue-200 transition">
+                            <i className="ri-home-4-line text-lg"></i>
+                        </Link>
+                    </div>
                     <div className="flex items-center gap-2">
                         <div className="flex items-center gap-1 bg-blue-100 text-blue-500 text-xs font-medium px-2 py-1 rounded-full">
                             <i className="ri-user-fill text-sm"></i>
@@ -792,13 +969,24 @@ const Project = () => {
                             <RiFolder3Line className="text-blue-400" />
                             <span className="text-sm font-medium text-blue-300">Files</span>
                         </div>
-                        <button
-                            onClick={() => setIsCreatingFile(true)}
-                            className="p-1.5 hover:bg-slate-700/50 rounded-lg transition-colors"
-                            title="New File (Ctrl/Cmd + N)"
-                        >
-                            <RiAddLine className="text-slate-400 hover:text-blue-400" />
-                        </button>
+                        <div className="flex items-center gap-1">
+                            {/* New File Button */}
+                            <button
+                                onClick={() => setIsCreatingFile(true)}
+                                className="p-1.5 hover:bg-slate-700/50 rounded-lg transition-colors"
+                                title="New File (Ctrl/Cmd + N)"
+                            >
+                                <i className="ri-file-add-line text-slate-400 hover:text-blue-400" />
+                            </button>
+                            {/* New Folder Button */}
+                            <button
+                                onClick={() => setIsCreatingFolder(true)}
+                                className="p-1.5 hover:bg-slate-700/50 rounded-lg transition-colors"
+                                title="New Folder"
+                            >
+                                <i className="ri-folder-add-line text-slate-400 hover:text-green-400" />
+                            </button>
+                        </div>
                     </div>
                     {/* File Tree (recursive) */}
                     <div className="flex-grow overflow-y-auto p-2 space-y-1">
@@ -855,17 +1043,16 @@ const Project = () => {
                         <div className="actions flex gap-2">
                             <button
                                 onClick={handleRunServer}
-                                className={`
-                                    relative flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200
+                                className={
+                                    `relative flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200
                                     ${containerStatus === 'running'
                                         ? 'bg-green-600 hover:bg-green-700'
                                         : containerStatus === 'error'
                                             ? 'bg-red-600 hover:bg-red-700'
-                                            : 'bg-blue-600 hover:bg-blue-700'
-                                    }
+                                            : 'bg-blue-600 hover:bg-blue-700'}
                                     text-white font-medium shadow-lg hover:shadow-xl
-                                    disabled:opacity-50 disabled:cursor-not-allowed
-                                `}
+                                    disabled:opacity-50 disabled:cursor-not-allowed`
+                                }
                                 disabled={containerStatus === 'installing' || containerStatus === 'starting'}
                             >
                                 <div className="flex items-center gap-2">
@@ -892,7 +1079,16 @@ const Project = () => {
                                     </div>
                                 )}
                             </button>
-                            
+                            {/* Output Button (shows after successful execution) */}
+                            {containerStatus === 'running' && iframeUrl && (
+                                <button
+                                    onClick={() => setIsOutputModalOpen(true)}
+                                    className="flex items-center gap-2 px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-lg transition-all duration-200 font-medium shadow-lg hover:shadow-xl"
+                                >
+                                    <i className="ri-window-line text-lg" />
+                                    <span>Output</span>
+                                </button>
+                            )}
                             {/* Close Server Button */}
                             {(containerStatus === 'running' || containerStatus === 'error') && (
                                 <button
@@ -903,6 +1099,16 @@ const Project = () => {
                                     <span>Stop</span>
                                 </button>
                             )}
+                            {/* Force Stop Button */}
+                            {(containerStatus === 'error' || currentProcess) && (
+                                <button
+                                    onClick={handleForceStop}
+                                    className="flex items-center gap-2 px-4 py-2 bg-red-800 hover:bg-red-900 text-white rounded-lg transition-all duration-200 font-medium shadow-lg hover:shadow-xl"
+                                >
+                                    <i className="ri-close-circle-line text-lg" />
+                                    <span>Force Stop</span>
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -911,21 +1117,19 @@ const Project = () => {
                         <div className="flex border-b border-slate-800 bg-slate-800/50">
                             <button
                                 onClick={() => setActiveTab('preview')}
-                                className={`px-4 py-2 text-sm font-medium transition-colors ${
-                                    activeTab === 'preview' 
-                                        ? 'text-blue-300 border-b-2 border-blue-500' 
+                                className={`px-4 py-2 text-sm font-medium transition-colors ${activeTab === 'preview'
+                                        ? 'text-blue-300 border-b-2 border-blue-500'
                                         : 'text-slate-400 hover:text-slate-300'
-                                }`}
+                                    }`}
                             >
                                 Preview
                             </button>
                             <button
                                 onClick={() => setActiveTab('output')}
-                                className={`px-4 py-2 text-sm font-medium transition-colors ${
-                                    activeTab === 'output' 
-                                        ? 'text-blue-300 border-b-2 border-blue-500' 
+                                className={`px-4 py-2 text-sm font-medium transition-colors ${activeTab === 'output'
+                                        ? 'text-blue-300 border-b-2 border-blue-500'
                                         : 'text-slate-400 hover:text-slate-300'
-                                }`}
+                                    }`}
                             >
                                 Output Logs
                             </button>
@@ -934,19 +1138,63 @@ const Project = () => {
 
                     {/* Output Logs Display */}
                     {activeTab === 'output' && (containerStatus === 'installing' || containerStatus === 'starting' || containerStatus === 'running' || containerStatus === 'error') && (
-                        <div className="flex-grow bg-slate-900 p-4 overflow-y-auto">
-                            <div className="bg-slate-800 rounded-lg p-4 h-full">
-                                <div className="text-sm font-mono text-slate-200 whitespace-pre-wrap">
-                                    {outputLogs.length === 0 ? (
-                                        <span className="text-slate-500">No output logs yet...</span>
-                                    ) : (
-                                        outputLogs.map((log, index) => (
-                                            <div key={index} className="mb-1">
+                        <div className="flex flex-col h-full bg-slate-900 p-4">
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-blue-300 font-semibold text-base">Output Logs</span>
+                                <div className="flex gap-2">
+                                <button
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(outputLogs.join('\n'));
+                                            setlogsCopiedStatus(true);
+                                            setTimeout(() => setlogsCopiedStatus(false), 500);
+                                        }}
+                                        className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded transition"
+                                        title="Copy Preview URL"
+                                    >
+                                        <i className="ri-clipboard-line text-blue-300"></i>
+                                        {logscopiedStatus && (
+                                            <span className="absolute -translate-x-1/2 text-xs bg-slate-800 text-blue-400 px-2 py-1 rounded shadow border border-blue-500 z-10">Copied!</span>
+                                        )}
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setOutputLogs([])
+                                            setClearStatus(true);
+                                            setTimeout(() => setClearStatus(false), 500);
+                                        }}
+                                        className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded transition"
+                                        title="Copy Preview URL"
+                                    >
+                                        <i className="ri-delete-bin-6-line mr-1"></i>
+                                        {clearStatus && (
+                                            <span className="absolute -translate-x-1/2 text-xs bg-slate-800 text-blue-400 px-2 py-1 rounded shadow border border-blue-500 z-10">Cleared!</span>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                            <div
+                                className="flex-grow bg-slate-800 rounded-lg p-4 overflow-y-auto border border-slate-700 shadow-inner text-sm font-mono select-text"
+                                style={{ maxHeight: '40vh', minHeight: '200px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                                ref={el => {
+                                    if (el) el.scrollTop = el.scrollHeight;
+                                }}
+                            >
+                                {outputLogs.length === 0 ? (
+                                    <span className="text-slate-500">No output logs yet...</span>
+                                ) : (
+                                    outputLogs.map((log, index) => {
+                                        let color = 'text-slate-200';
+                                        if (/error|fail|exception|not found|cannot|err/i.test(log)) color = 'text-red-400';
+                                        else if (/warn|deprecated/i.test(log)) color = 'text-yellow-300';
+                                        else if (/success|started|listening|ready/i.test(log)) color = 'text-green-400';
+                                        else if (/info|install|setup|start|run/i.test(log)) color = 'text-blue-300';
+                                        return (
+                                            <div key={index} className={color + ' break-words'}>
                                                 {log}
                                             </div>
-                                        ))
-                                    )}
-                                </div>
+                                        );
+                                    })
+                                )}
                             </div>
                         </div>
                     )}
@@ -999,30 +1247,30 @@ const Project = () => {
                                             if (pathArr.length === 1) {
                                                 const fileName = pathArr[0];
                                                 if (tree[fileName]?.file) {
-                                                    return { 
-                                                        ...tree, 
-                                                        [fileName]: { 
-                                                            ...tree[fileName], 
-                                                            file: { 
-                                                                ...tree[fileName].file, 
-                                                                contents: value 
-                                                            } 
-                                                        } 
+                                                    return {
+                                                        ...tree,
+                                                        [fileName]: {
+                                                            ...tree[fileName],
+                                                            file: {
+                                                                ...tree[fileName].file,
+                                                                contents: value
+                                                            }
+                                                        }
                                                     };
                                                 } else if (tree[fileName] && tree[fileName].contents !== undefined) {
-                                                    return { 
-                                                        ...tree, 
-                                                        [fileName]: { 
-                                                            ...tree[fileName], 
-                                                            contents: value 
-                                                        } 
+                                                    return {
+                                                        ...tree,
+                                                        [fileName]: {
+                                                            ...tree[fileName],
+                                                            contents: value
+                                                        }
                                                     };
                                                 }
                                                 return tree;
                                             }
                                             const [head, ...rest] = pathArr;
                                             if (!tree[head]) return tree;
-                                            
+
                                             return {
                                                 ...tree,
                                                 [head]: {
@@ -1033,14 +1281,14 @@ const Project = () => {
                                         };
                                         setFileTree(prev => {
                                             const updatedTree = updateTree(prev, currentFile.split('/'), e.target.value);
-                                            
+
                                             // Sync with WebContainer if available
                                             if (webContainer) {
                                                 webContainer.mount(updatedTree).catch(error => {
                                                     console.error('Failed to sync file tree with WebContainer:', error);
                                                 });
                                             }
-                                            
+
                                             return updatedTree;
                                         });
                                         updateActiveLine();
@@ -1071,20 +1319,6 @@ const Project = () => {
                         </div>
                     )}
                 </div>
-
-                {iframeUrl && webContainer &&
-                    (<div className="flex min-w-96 flex-col h-full">
-                        <div className="address-bar">
-
-                            <input type="text"
-                                onChange={(e) => setIframeUrl(e.target.value)}
-                                value={iframeUrl} className='w-full p-2 px-4 bg-slate-400'
-                            />
-                        </div>
-                        <iframe src={iframeUrl} className='w-1//2 h-full'></iframe>
-                    </div>
-                    )}
-
             </section>
 
             {/* File Creation Modal */}
@@ -1093,16 +1327,24 @@ const Project = () => {
                     <div className="bg-slate-800 rounded-2xl shadow-2xl p-8 w-full max-w-md border border-slate-700">
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-xl font-bold text-blue-300">Create New File</h2>
-                            <button 
+                            <button
                                 onClick={() => {
                                     setIsCreatingFile(false);
                                     setNewFileName('');
-                                }} 
+                                    setSelectedFolderPath('');
+                                }}
                                 className="text-slate-400 hover:text-slate-200 transition p-2 hover:bg-slate-700 rounded-lg"
                             >
                                 <i className="ri-close-line text-2xl"></i>
                             </button>
                         </div>
+                        {selectedFolderPath && (
+                            <div className="mb-4 p-3 bg-slate-700/50 rounded-lg border border-slate-600">
+                                <p className="text-sm text-slate-300">
+                                    <span className="text-slate-400">Creating file in:</span> {selectedFolderPath}
+                                </p>
+                            </div>
+                        )}
                         <div className="mb-6">
                             <label className="block text-sm font-medium text-slate-300 mb-2">
                                 File Name
@@ -1117,6 +1359,7 @@ const Project = () => {
                                     } else if (e.key === 'Escape') {
                                         setIsCreatingFile(false);
                                         setNewFileName('');
+                                        setSelectedFolderPath('');
                                     }
                                 }}
                                 className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -1132,6 +1375,7 @@ const Project = () => {
                                 onClick={() => {
                                     setIsCreatingFile(false);
                                     setNewFileName('');
+                                    setSelectedFolderPath('');
                                 }}
                                 className="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded-lg transition"
                             >
@@ -1144,6 +1388,165 @@ const Project = () => {
                             >
                                 Create File
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Folder Creation Modal */}
+            {isCreatingFolder && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+                    <div className="bg-slate-800 rounded-2xl shadow-2xl p-8 w-full max-w-md border border-slate-700">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-xl font-bold text-green-300">Create New Folder</h2>
+                            <button
+                                onClick={() => {
+                                    setIsCreatingFolder(false);
+                                    setNewFolderName('');
+                                    setSelectedFolderPath('');
+                                }}
+                                className="text-slate-400 hover:text-slate-200 transition p-2 hover:bg-slate-700 rounded-lg"
+                            >
+                                <i className="ri-close-line text-2xl"></i>
+                            </button>
+                        </div>
+                        {selectedFolderPath && (
+                            <div className="mb-4 p-3 bg-slate-700/50 rounded-lg border border-slate-600">
+                                <p className="text-sm text-slate-300">
+                                    <span className="text-slate-400">Creating folder in:</span> {selectedFolderPath}
+                                </p>
+                            </div>
+                        )}
+                        <div className="mb-6">
+                            <label className="block text-sm font-medium text-slate-300 mb-2">
+                                Folder Name
+                            </label>
+                            <input
+                                type="text"
+                                value={newFolderName}
+                                onChange={(e) => setNewFolderName(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        handleCreateFolder();
+                                    } else if (e.key === 'Escape') {
+                                        setIsCreatingFolder(false);
+                                        setNewFolderName('');
+                                        setSelectedFolderPath('');
+                                    }
+                                }}
+                                className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                placeholder="Enter folder name"
+                                autoFocus
+                            />
+                            <p className="text-xs text-slate-400 mt-2">
+                                Press Enter to create, Escape to cancel
+                            </p>
+                        </div>
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={() => {
+                                    setIsCreatingFolder(false);
+                                    setNewFolderName('');
+                                    setSelectedFolderPath('');
+                                }}
+                                className="px-4 py-2 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded-lg transition"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleCreateFolder}
+                                className="px-6 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg shadow transition"
+                                disabled={!newFolderName.trim()}
+                            >
+                                Create Folder
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Output Preview Modal */}
+            {isOutputModalOpen && iframeUrl && webContainer && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+                    <div className="relative w-full max-w-4xl h-[80vh] bg-slate-900 rounded-2xl shadow-2xl border border-slate-700 flex flex-col">
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between px-6 py-3 bg-slate-800 border-b border-slate-700 rounded-t-2xl">
+                            <span className="text-blue-300 font-semibold text-base flex items-center gap-2">
+                                <i className="ri-window-line text-lg" /> Output Preview
+                            </span>
+                            <div className="flex gap-2 items-center">
+                                <div className="relative">
+                                    <button
+                                        onClick={() => {
+                                            setIframeUrl(iframeUrl);
+                                            setReloadedStatus(true);
+                                            setTimeout(() => setReloadedStatus(false), 1000);
+                                        }}
+                                        className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded transition"
+                                        title="Reload Preview"
+                                    >
+                                        <i className="ri-refresh-line text-blue-300"></i>
+                                    </button>
+                                    {reloadedStatus && (
+                                        <span className="absolute left-1/2 -translate-x-1/2 top-10 text-xs bg-slate-800 text-green-400 px-2 py-1 rounded shadow border border-green-500 z-10">Reloaded!</span>
+                                    )}
+                                </div>
+                                <div className="relative">
+                                    <button
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(iframeUrl);
+                                            setopCopiedStatus(true);
+                                            setTimeout(() => setopCopiedStatus(false), 1000);
+                                        }}
+                                        className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded transition"
+                                        title="Copy Preview URL"
+                                    >
+                                        <i className="ri-clipboard-line text-blue-300"></i>
+                                    </button>
+                                    {opcopiedStatus && (
+                                        <span className="absolute left-1/2 -translate-x-1/2 top-10 text-xs bg-slate-800 text-blue-400 px-2 py-1 rounded shadow border border-blue-500 z-10">Copied!</span>
+                                    )}
+                                </div>
+                                <a
+                                    href={iframeUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded transition"
+                                    title="Open in new tab"
+                                >
+                                    <i className="ri-external-link-line text-blue-300"></i>
+                                </a>
+                                <button
+                                    onClick={() => setIsOutputModalOpen(false)}
+                                    className="p-1.5 bg-red-700 hover:bg-red-800 rounded transition ml-2"
+                                    title="Close Preview"
+                                >
+                                    <i className="ri-close-line text-white text-lg"></i>
+                                </button>
+                            </div>
+                        </div>
+                        {/* Address Bar */}
+                        <div className="address-bar flex items-center gap-2 px-6 py-2 bg-slate-700 border-b border-slate-800">
+                            <input
+                                type="text"
+                                value={iframeUrl}
+                                className="w-full p-2 px-4 bg-slate-600 text-slate-200 rounded focus:outline-none text-xs font-mono"
+                                readOnly
+                            />
+                        </div>
+                        {/* Preview Iframe */}
+                        <div className="relative flex-grow bg-slate-900 rounded-b-2xl overflow-hidden flex items-center justify-center">
+                            <iframe
+                                src={iframeUrl}
+                                className="w-full h-full min-h-[300px] border-0 rounded-b-2xl shadow-lg bg-white"
+                                style={{ background: 'white' }}
+                                onLoad={(e) => {
+                                    e.target.style.opacity = 1;
+                                }}
+                                onError={(e) => {
+                                    e.target.style.opacity = 0.5;
+                                }}
+                            />
                         </div>
                     </div>
                 </div>
