@@ -1,9 +1,11 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+﻿import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_KEY);
+const DEFAULT_PROVIDER_ORDER = ['openrouter', 'openai', 'anthropic', 'xai', 'gemini'];
+const SHARED_SYSTEM_PROMPT = 'You are an expert coding assistant. Always respond in valid JSON with at least a "text" field. When asked to scaffold projects, include fileTree, buildCommand, and startCommand when possible.';
 
 const model = genAI.getGenerativeModel({
     model: 'gemini-2.0-flash',
@@ -91,6 +93,196 @@ const model = genAI.getGenerativeModel({
     
 });
 
+    const getProviderOrder = () => {
+      const configured = (process.env.AI_FALLBACK_ORDER || '')
+        .split(',')
+        .map(item => item.trim().toLowerCase())
+        .filter(Boolean);
+
+      if (configured.length === 0) {
+        return DEFAULT_PROVIDER_ORDER;
+      }
+
+      // Keep only known providers and preserve order.
+      return configured.filter(name => DEFAULT_PROVIDER_ORDER.includes(name));
+    };
+
+    const isRetryableOrQuotaError = (error) => {
+      const status = error?.status || error?.statusCode;
+      const message = (error?.message || '').toLowerCase();
+
+      if ([408, 409, 429, 500, 502, 503, 504].includes(status)) {
+        return true;
+      }
+
+      return /quota|rate limit|too many requests|temporar|timeout|overloaded|unavailable/.test(message);
+    };
+
+    const extractTextFromOpenAIResponse = (data) => {
+      const content = data?.choices?.[0]?.message?.content;
+      if (typeof content === 'string') {
+        return content;
+      }
+
+      if (Array.isArray(content)) {
+        return content
+          .filter(part => part?.type === 'text')
+          .map(part => part.text)
+          .join('\n');
+      }
+
+      return '';
+    };
+
+    const extractTextFromAnthropicResponse = (data) => {
+      const parts = data?.content;
+      if (!Array.isArray(parts)) {
+        return '';
+      }
+
+      return parts
+        .filter(part => part?.type === 'text')
+        .map(part => part.text)
+        .join('\n');
+    };
+
+    const generateWithGemini = async (prompt) => {
+      if (!process.env.GOOGLE_AI_KEY) {
+        throw new Error('Gemini key is not configured (GOOGLE_AI_KEY).');
+      }
+
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }]
+      });
+
+      return result.response.text();
+    };
+
+    const generateWithOpenAICompatible = async ({ providerName, baseUrl, apiKey, modelName, prompt }) => {
+      if (!apiKey) {
+        throw new Error(`${providerName} key is not configured.`);
+      }
+
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: modelName,
+          temperature: 0.4,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: SHARED_SYSTEM_PROMPT },
+            { role: 'user', content: prompt },
+          ],
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const error = new Error(data?.error?.message || `${providerName} request failed with status ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+
+      const text = extractTextFromOpenAIResponse(data);
+      if (!text) {
+        throw new Error(`${providerName} returned an empty response.`);
+      }
+
+      return text;
+    };
+
+    const generateWithAnthropic = async (prompt) => {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) {
+        throw new Error('Anthropic key is not configured (ANTHROPIC_API_KEY).');
+      }
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-latest',
+          max_tokens: 4096,
+          temperature: 0.4,
+          system: SHARED_SYSTEM_PROMPT,
+          messages: [
+            { role: 'user', content: prompt },
+          ],
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const error = new Error(data?.error?.message || `Anthropic request failed with status ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+
+      const text = extractTextFromAnthropicResponse(data);
+      if (!text) {
+        throw new Error('Anthropic returned an empty response.');
+      }
+
+      return text;
+    };
+
+    const generateWithOpenAI = async (prompt) => {
+      return generateWithOpenAICompatible({
+        providerName: 'OpenAI',
+        baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+        apiKey: process.env.OPENAI_API_KEY,
+        modelName: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+        prompt,
+      });
+    };
+
+    const generateWithOpenRouter = async (prompt) => {
+      return generateWithOpenAICompatible({
+        providerName: 'OpenRouter',
+        baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+        apiKey: process.env.OPENROUTER_API_KEY,
+        modelName: process.env.OPENROUTER_MODEL || 'openai/gpt-4.1-mini',
+        prompt,
+      });
+    };
+
+    const generateWithXai = async (prompt) => {
+      return generateWithOpenAICompatible({
+        providerName: 'xAI',
+        baseUrl: process.env.XAI_BASE_URL || 'https://api.x.ai/v1',
+        apiKey: process.env.XAI_API_KEY,
+        modelName: process.env.XAI_MODEL || 'grok-2-latest',
+        prompt,
+      });
+    };
+
+    const generateWithProvider = async (provider, prompt) => {
+      switch (provider) {
+        case 'openrouter':
+          return generateWithOpenRouter(prompt);
+        case 'gemini':
+          return generateWithGemini(prompt);
+        case 'openai':
+          return generateWithOpenAI(prompt);
+        case 'anthropic':
+          return generateWithAnthropic(prompt);
+        case 'xai':
+          return generateWithXai(prompt);
+        default:
+          throw new Error(`Unknown AI provider: ${provider}`);
+      }
+    };
+
 // ---
 
 // SPECIAL INSTRUCTION — FULL-STACK PROJECT GENERATOR:
@@ -142,11 +334,36 @@ const model = genAI.getGenerativeModel({
 
 
 export const generateResult = async (prompt) => {
-    console.log(`Generating content for prompt: ${prompt}`)
+  console.log(`Generating content for prompt: ${prompt}`);
 
-    const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }]
-    });
-    console.log(result.response.text())
-    return result.response.text()
+  const providers = getProviderOrder();
+  const failures = [];
+
+  for (const provider of providers) {
+    try {
+      const responseText = await generateWithProvider(provider, prompt);
+      console.log(`AI response generated via provider: ${provider}`);
+      return responseText;
+    } catch (error) {
+      const message = error?.message || 'Unknown error';
+      failures.push({ provider, message });
+      console.warn(`Provider ${provider} failed: ${message}`);
+
+      // Keep trying other providers for transient/quota errors or missing key/setup.
+      if (isRetryableOrQuotaError(error) || /not configured|empty response|unknown ai provider/i.test(message.toLowerCase())) {
+        continue;
+      }
+
+      // Even for non-retryable errors, continue if we still have providers left.
+    }
+  }
+
+  const details = failures
+    .map(item => `${item.provider}: ${item.message}`)
+    .join(' | ');
+
+  const aggregateError = new Error(`All AI providers failed. ${details}`);
+  aggregateError.code = 'ALL_AI_PROVIDERS_FAILED';
+  aggregateError.failures = failures;
+  throw aggregateError;
 }

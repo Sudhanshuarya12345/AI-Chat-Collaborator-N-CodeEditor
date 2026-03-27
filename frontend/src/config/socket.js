@@ -3,8 +3,10 @@ import socket from "socket.io-client";
 let socketInstance = null;
 
 export const initializeSocket = (projectId) => {
+    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+
     socketInstance = socket.io(import.meta.env.VITE_API_URL, {
-        auth: { token: localStorage.getItem('token') },
+        auth: { token },
         query: { projectId },
     });
     return socketInstance;

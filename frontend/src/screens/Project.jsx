@@ -85,12 +85,15 @@ const Project = () => {
     }
 
     const send = () => {
+        const trimmedMessage = message.trim();
+        if (!trimmedMessage) return;
+
         sendMessage('project-message', {
-            message,
+            message: trimmedMessage,
             sender: user,
         })
         setMessages(prevMessages => [...prevMessages, {
-            message,
+            message: trimmedMessage,
             sender: user,
             type: 'outgoing',
         }])
@@ -612,8 +615,17 @@ const Project = () => {
             setStatusMessage('Setting up environment...');
             setOutputLogs(prev => [...prev, 'Setting up environment...']);
 
-            // First mount the file tree
-            await webContainer?.mount(fileTree);
+            // Build a runnable snapshot so manually created projects also get patched.
+            const runnableTree = JSON.parse(JSON.stringify(fileTree || {}));
+            patchExpressPortInFileTree(runnableTree);
+            patchPackageJsonStartScript(runnableTree);
+            patchStaticFrontendProject(runnableTree);
+
+            // Keep editor state aligned with what we mount into the container.
+            setFileTree(runnableTree);
+
+            // First mount the patched file tree
+            await webContainer?.mount(runnableTree);
 
             // Install dependencies
             setStatusMessage('Installing dependencies...');
@@ -645,7 +657,20 @@ const Project = () => {
                 currentProcess.kill()
             }
 
-            const tempRunProcess = await webContainer?.spawn('npm', ['start']);
+            let runCommand = 'npm';
+            let runArgs = ['start'];
+
+            // If no start script exists, fall back to a static file server for index.html projects.
+            if (
+                !runnableTree?.['package.json']?.file?.contents?.includes('"start"') &&
+                runnableTree?.['index.html']
+            ) {
+                runCommand = 'npx';
+                runArgs = ['live-server', '--port=3000', '--no-browser'];
+                setOutputLogs(prev => [...prev, 'No start script found. Using live-server fallback...']);
+            }
+
+            const tempRunProcess = await webContainer?.spawn(runCommand, runArgs);
 
             if (tempRunProcess && tempRunProcess.output) {
                 tempRunProcess.output.pipeTo(new WritableStream({
@@ -877,7 +902,7 @@ const Project = () => {
                                     onChange={(e) => setMessage(e.target.value)}
                                     onKeyDown={(e) => { if (e.key === 'Enter') send() }}
                                     className="flex-grow px-4 py-3 rounded-l-xl border border-slate-700 outline-none focus:ring-2 focus:ring-blue-400 bg-slate-800 text-blue-100 shadow focus:bg-slate-900 transition"
-                                    type="text" placeholder="Enter message"
+                                    type="text" placeholder="To ask ai Start your message with @ai"
                                 />
                                 <button
                                     onClick={send}

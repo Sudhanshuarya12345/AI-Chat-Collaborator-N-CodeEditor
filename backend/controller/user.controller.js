@@ -21,7 +21,7 @@ export const createUserController = async (req, res) => {
         res.status(200).json({ user, token });
     }
     catch (error) {
-        res.status(400).send(error.message);
+        res.status(400).json({ message: error.message });
     }
 }
 
@@ -60,17 +60,25 @@ export const loginController = async (req, res) => {
         res.status(200).json({ user, token });
     }
     catch (err) {
-        res.status(400).send(err.message);
+        res.status(400).json({ message: err.message });
     }
 }
 
 
 export const profileController = async (req, res) => {
-    console.log(req.user);
+    try {
+        const user = await userModel.findOne({ email: req.user.email });
 
-    res.status(200).json({
-        user: req.user
-    });
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        res.status(200).json({
+            user
+        });
+    } catch (err) {
+        res.status(400).json({ message: err.message });
+    }
 }
 
 
@@ -103,6 +111,6 @@ export const getAllUsersController = async (req, res) => {
         });
     } 
     catch (err) {
-        res.status(400).send(err.message);
+        res.status(400).json({ message: err.message });
     }
 }

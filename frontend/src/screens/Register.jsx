@@ -43,7 +43,14 @@ const Register = () => {
       }, 1500);
     } catch (err) {
       console.error(err?.response?.data);
-      setError(err?.response?.data?.message || "Registration failed. Try again.");
+      const apiError = err?.response?.data;
+
+      // Express-validator errors arrive as an array under "errors".
+      if (Array.isArray(apiError?.errors) && apiError.errors.length > 0) {
+        setError(apiError.errors[0].msg || "Registration failed. Try again.");
+      } else {
+        setError(apiError?.message || "Registration failed. Try again.");
+      }
     } finally {
       setIsSubmitting(false);
     }
