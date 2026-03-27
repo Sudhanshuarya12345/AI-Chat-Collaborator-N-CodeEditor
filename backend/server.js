@@ -139,10 +139,20 @@ io.on('connection', (socket) => {
                         }
                     });
                 } catch (aiError) {
-                    const isQuotaError = aiError?.status === 429 || /quota|too many requests/i.test(aiError?.message || '');
-                    const aiErrorMessage = isQuotaError
-                        ? 'AI quota limit reached for the current API key. Please enable billing or use a key with available quota, then try again.'
-                        : 'AI could not respond right now. Please try again in a moment.';
+                    let aiErrorMessage = 'AI could not respond right now. Please try again in a moment.';
+
+                    if (aiError?.code === 'ALL_AI_PROVIDERS_FAILED' && Array.isArray(aiError?.failures)) {
+                        const failureSummary = aiError.failures
+                            .map((f) => `${f.provider}: ${String(f.message || 'failed').slice(0, 90)}`)
+                            .join(' | ');
+
+                        aiErrorMessage = `All configured AI providers failed. ${failureSummary}`;
+                    } else {
+                        const isQuotaError = aiError?.status === 429 || /quota|too many requests/i.test(aiError?.message || '');
+                        if (isQuotaError) {
+                            aiErrorMessage = 'AI quota limit reached for the current API key. Please enable billing or use a key with available quota, then try again.';
+                        }
+                    }
 
                     console.error('AI response generation failed:', aiError);
 

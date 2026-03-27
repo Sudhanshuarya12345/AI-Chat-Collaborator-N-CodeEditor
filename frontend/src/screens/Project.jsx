@@ -615,8 +615,17 @@ const Project = () => {
             setStatusMessage('Setting up environment...');
             setOutputLogs(prev => [...prev, 'Setting up environment...']);
 
-            // First mount the file tree
-            await webContainer?.mount(fileTree);
+            // Build a runnable snapshot so manually created projects also get patched.
+            const runnableTree = JSON.parse(JSON.stringify(fileTree || {}));
+            patchExpressPortInFileTree(runnableTree);
+            patchPackageJsonStartScript(runnableTree);
+            patchStaticFrontendProject(runnableTree);
+
+            // Keep editor state aligned with what we mount into the container.
+            setFileTree(runnableTree);
+
+            // First mount the patched file tree
+            await webContainer?.mount(runnableTree);
 
             // Install dependencies
             setStatusMessage('Installing dependencies...');
@@ -648,7 +657,20 @@ const Project = () => {
                 currentProcess.kill()
             }
 
-            const tempRunProcess = await webContainer?.spawn('npm', ['start']);
+            let runCommand = 'npm';
+            let runArgs = ['start'];
+
+            // If no start script exists, fall back to a static file server for index.html projects.
+            if (
+                !runnableTree?.['package.json']?.file?.contents?.includes('"start"') &&
+                runnableTree?.['index.html']
+            ) {
+                runCommand = 'npx';
+                runArgs = ['live-server', '--port=3000', '--no-browser'];
+                setOutputLogs(prev => [...prev, 'No start script found. Using live-server fallback...']);
+            }
+
+            const tempRunProcess = await webContainer?.spawn(runCommand, runArgs);
 
             if (tempRunProcess && tempRunProcess.output) {
                 tempRunProcess.output.pipeTo(new WritableStream({
