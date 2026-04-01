@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useContext, useRef } from 'react'
-import { useLocation, Link } from 'react-router-dom'
+import { useLocation, Link, useParams, Navigate } from 'react-router-dom'
 import axios from '../config/axios.js'
 import { initializeSocket, recieveMessage, sendMessage } from '../config/socket.js'
 import { UserContext } from '../context/user.context.jsx'
 import Markdown from 'markdown-to-jsx'
 import { RiFolder3Line, RiFolderOpenLine, RiFile3Line, RiAddLine } from 'react-icons/ri'
 import { getWebContainer } from '../config/webContainer.js'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 
 const Project = () => {
@@ -15,7 +17,18 @@ const Project = () => {
     const [isModalOpen, setIsModalOpen] = useState(false) // <-- Added state for modal
     const [selectedUserId, setSelectedUserId] = useState(new Set()) // <-- Store selected user ID
     const [users, setUsers] = useState([]) // <-- Store users data
-    const [project, setProject] = useState(location.state.project)
+    const [project, setProject] = useState(null);
+    const [error, setError] = useState(null);
+    const { projectId: routeProjectId } = useParams();
+    const projectId = routeProjectId || location.state?.project?._id;
+
+    // Add a state for loading
+    const [isLoading, setIsLoading] = useState(true);
+
+    // Redirect if no project ID is available
+    if (!projectId) {
+        return <Navigate to="/" replace />;
+    }
     const [message, setMessage] = useState('') // <-- Store messages data
     const [messages, setMessages] = useState([]) // <-- NEW STATE for messages
     const [aidatacopiedStatus, setaidataCopiedStatus] = useState(false);  // <-- NEW STATE for ai response copied status
@@ -40,6 +53,7 @@ const Project = () => {
     const messageBox = React.createRef()
     const lineNumberRef = useRef(null);
     const textareaRef = useRef(null);
+    const highlightedCodeRef = useRef(null);
     const [activeLine, setActiveLine] = useState(1);
     const [editorWidth, setEditorWidth] = useState(600);
     const resizerRef = useRef(null);
@@ -58,6 +72,109 @@ const Project = () => {
     // Feedback states for output modal buttons
     const [reloadedStatus, setReloadedStatus] = useState(false);
 
+    const getLanguageFromFilename = (filename = '') => {
+        const ext = filename.split('.').pop()?.toLowerCase();
+        const languageMap = {
+            js: 'javascript',
+            jsx: 'jsx',
+            ts: 'typescript',
+            tsx: 'tsx',
+            json: 'json',
+            html: 'markup',
+            htm: 'markup',
+            css: 'css',
+            scss: 'scss',
+            sass: 'sass',
+            md: 'markdown',
+            py: 'python',
+            java: 'java',
+            c: 'c',
+            cpp: 'cpp',
+            cs: 'csharp',
+            go: 'go',
+            rs: 'rust',
+            php: 'php',
+            rb: 'ruby',
+            sh: 'bash',
+            yml: 'yaml',
+            yaml: 'yaml',
+            xml: 'markup'
+        };
+
+        return languageMap[ext] || 'javascript';
+    };
+
+    // Helper function to normalize fileTree from AI
+    // Handles both flat structures (with path keys) and nested structures
+    const normalizeFileTree = (flatOrNestedTree) => {
+        if (!flatOrNestedTree || typeof flatOrNestedTree !== 'object') {
+            return {};
+        }
+
+        // Check if tree uses path notation (e.g., "backend/server.js")
+        const hasPathNotation = Object.keys(flatOrNestedTree).some(key => key.includes('/'));
+
+        if (!hasPathNotation) {
+            // Already nested structure
+            return flatOrNestedTree;
+        }
+
+        // Flatten and then unflatten to create proper nested structure
+        const root = {};
+
+        for (const [path, node] of Object.entries(flatOrNestedTree)) {
+            const parts = path.split('/');
+            let current = root;
+
+            // Create nested structure for directories
+            for (let i = 0; i < parts.length - 1; i++) {
+                const part = parts[i];
+                if (!current[part]) {
+                    current[part] = { directory: {} };
+                }
+                if (!current[part].directory) {
+                    current[part].directory = {};
+                }
+                current = current[part].directory;
+            }
+
+            // Add the file at the correct location
+            const fileName = parts[parts.length - 1];
+            current[fileName] = node;
+        }
+
+        return root;
+    };
+
+    // Deep merge function for file trees
+    const deepMergeFileTree = (target, source) => {
+        const result = { ...target };
+
+        for (const [key, sourceNode] of Object.entries(source)) {
+            if (!result[key]) {
+                result[key] = sourceNode;
+            } else {
+                // Both exist - need to merge
+                const targetNode = result[key];
+                
+                if (sourceNode.file && targetNode.file) {
+                    // Both are files - take source
+                    result[key] = sourceNode;
+                } else if (sourceNode.directory && targetNode.directory) {
+                    // Both are directories - recursively merge
+                    result[key] = {
+                        directory: deepMergeFileTree(targetNode.directory, sourceNode.directory)
+                    };
+                } else {
+                    // Type mismatch - take source
+                    result[key] = sourceNode;
+                }
+            }
+        }
+
+        return result;
+    };
+
     const handleUserClick = (id) => {
         setSelectedUserId(prevSelectedUserId => {
             const newSelectedUserId = new Set(prevSelectedUserId)
@@ -72,7 +189,7 @@ const Project = () => {
 
     function addCollaborators() {
         axios.put(`/projects/add-user`, {
-            projectId: location.state.project._id,
+            projectId: project._id,
             users: Array.from(selectedUserId)
         })
             .then(response => {
@@ -337,6 +454,7 @@ const Project = () => {
 
     // Add keyboard shortcuts
     useEffect(() => {
+        if (!project) return;
         const handleKeyPress = (e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
                 e.preventDefault();
@@ -346,10 +464,47 @@ const Project = () => {
 
         window.addEventListener('keydown', handleKeyPress);
         return () => window.removeEventListener('keydown', handleKeyPress);
-    }, []);
+    }, [project]);
 
     useEffect(() => {
-        initializeSocket(project._id) // Initialize socket connection
+        if (!projectId) return;
+
+        setIsLoading(true);
+        setError(null);
+
+        // Fetch project details
+        axios.get(`/projects/get-project/${projectId}`)
+            .then(response => {
+                if (response.data && response.data.project) {
+                    setProject(response.data.project);
+                } else {
+                    setError("Project not found or invalid response.");
+                }
+            })
+            .catch(error => {
+                console.error("Failed to fetch project:", error);
+                setError(error.response?.data?.message || "Failed to fetch project details.");
+            })
+            .finally(() => {
+                setIsLoading(false);
+            });
+
+        // Fetch all users for collaborator modal
+        axios.get('/users/all')
+            .then(response => {
+                setUsers(response.data.users);
+            })
+            .catch(error => {
+                console.log("Failed to fetch users:", error);
+            });
+
+    }, [projectId]);
+
+    useEffect(() => {
+        if (!project) return; // Don't initialize socket if project is not loaded
+
+        console.log('Initializing socket for project:', project._id);
+        initializeSocket(project._id); // Initialize socket connection
 
         const initializeContainer = async () => {
             try {
@@ -370,69 +525,127 @@ const Project = () => {
         // Initialize container immediately
         initializeContainer();
 
-        recieveMessage('chat-history', (history) => {
+        // Create callback functions with proper closure
+        const handleChatHistory = (history) => {
+            console.log('Received chat history:', history);
             setMessages(history.map(msg => ({
                 ...msg,
                 type: msg.sender?.email === user?.email ? 'outgoing' : 'incoming'
             })));
-        });
+        };
 
-        let currentWebContainer = null;
-        recieveMessage('project-message', async data => {
+        const handleProjectMessage = async (data) => {
+            console.log('Received project-message:', data);
             try {
+                // Handle both old format (data.message as string) and new format (data as full object)
                 let message;
-                try {
-                    message = JSON.parse(data.message);
-                } catch (e) {
-                    message = data.message;
+                let messageToDisplay;
+                
+                if (data.message && typeof data.message === 'string') {
+                    try {
+                        message = JSON.parse(data.message);
+                        messageToDisplay = JSON.stringify(message);
+                    } catch (e) {
+                        message = data.message;
+                        messageToDisplay = data.message;
+                    }
+                } else if (data.text || data.fileTree) {
+                    // New format: data is already parsed with text/fileTree properties
+                    message = data;
+                    messageToDisplay = JSON.stringify({ text: data.text || '' });
+                } else {
+                    message = data;
+                    messageToDisplay = JSON.stringify({ text: JSON.stringify(data) });
                 }
 
                 if (message.fileTree) {
-                    patchExpressPortInFileTree(message.fileTree); // Patch before mounting
-                    patchPackageJsonStartScript(message.fileTree); // Patch start script
-                    patchStaticFrontendProject(message.fileTree); // Patch static frontend
-
-                    // Get the latest webContainer instance
-                    if (!currentWebContainer) {
-                        currentWebContainer = await getWebContainer();
-                        setWebContainer(currentWebContainer);
+                    console.log('Processing fileTree from AI:', message.fileTree);
+                    // Normalize the fileTree to handle both flat and nested structures
+                    const normalizedTree = normalizeFileTree(message.fileTree);
+                    console.log('Normalized fileTree:', normalizedTree);
+                    
+                    try {
+                        patchExpressPortInFileTree(normalizedTree); // Patch before mounting
+                        patchPackageJsonStartScript(normalizedTree); // Patch start script
+                        patchStaticFrontendProject(normalizedTree); // Patch static frontend
+                        console.log('Patching complete');
+                    } catch (patchError) {
+                        console.error('Error during patching:', patchError);
                     }
 
-                    if (currentWebContainer) {
-                        await currentWebContainer.mount(message.fileTree);
-                        setFileTree(message.fileTree);
-                    } else {
-                        console.error('WebContainer not initialized');
+                    try {
+                        // Get the latest webContainer instance
+                        console.log('Getting webContainer...');
+                        let container = null;
+                        try {
+                            container = await getWebContainer();
+                            console.log('Got container:', !!container);
+                        } catch (getContainerError) {
+                            console.error('Failed to get/initialize WebContainer:', getContainerError?.message || getContainerError);
+                            console.error('Container error stack:', getContainerError?.stack);
+                            // Continue anyway - we can still display files in the tree, just can't execute them
+                            console.log('Continuing with file tree display only (no execution)');
+                        }
+                        
+                        setWebContainer(container);
+
+                        if (container) {
+                            console.log('Container ready, attempting to mount normalized tree...');
+                            console.log('Mounting items:', Object.keys(normalizedTree).length);
+                            
+                            try {
+                                await container.mount(normalizedTree);
+                                console.log('Files mounted to container successfully');
+                            } catch (mountSpecificError) {
+                                console.error('container.mount() failed:', mountSpecificError?.message || mountSpecificError);
+                                console.error('Mount error stack:', mountSpecificError?.stack);
+                                // Still update file tree even if mount failed
+                                console.log('Updating file tree display despite mount failure');
+                            }
+                        } else {
+                            console.warn('WebContainer unavailable - file tree display only');
+                        }
+                        
+                        // Update file tree regardless of WebContainer status
+                        // This ensures files are visible even if execution is not possible
+                        setFileTree(prev => {
+                            // Use deep merge to properly handle nested structures
+                            const merged = deepMergeFileTree(prev, normalizedTree);
+                            console.log('Updated fileTree state with', Object.keys(merged).length, 'top-level items');
+                            return merged;
+                        });
+                    } catch (mountError) {
+                        console.error('FATAL: Error in file mounting process:', mountError?.message || mountError);
+                        console.error('Full error:', mountError);
                     }
                 }
 
-                setMessages(prevMessages => [...prevMessages, { ...data, type: 'incoming' }]);
+                // Add message to chat
+                setMessages(prevMessages => {
+                    const updated = [...prevMessages, { 
+                        ...data, 
+                        message: messageToDisplay, 
+                        type: 'incoming',
+                        sender: data.sender || { email: 'AI', type: 'ai' }
+                    }];
+                    console.log('Updated messages:', updated.length, 'messages');
+                    return updated;
+                });
             } catch (error) {
                 console.error('Error processing message:', error);
             }
-        });
-
-        axios.get(`/projects/get-project/${location.state.project._id}`)
-            .then(response => {
-                console.log(response.data.project)
-                setProject(response.data.project)
-            })
-
-        axios.get('/users/all')
-            .then(response => {
-                setUsers(response.data.users)
-            })
-            .catch(error => {
-                console.log(error)
-            })
-
-        // Cleanup function
-        return () => {
-            if (currentWebContainer) {
-                currentWebContainer = null;
-            }
         };
-    }, []);
+
+        // Set up socket listeners
+        recieveMessage('chat-history', handleChatHistory);
+        recieveMessage('project-message', handleProjectMessage);
+
+        // Cleanup function - remove listeners when project changes
+        return () => {
+            console.log('Cleaning up socket listeners for project:', project._id);
+            // Listeners will be re-registered on next render with new project
+        };
+    }, [project?._id, user?.email]);
 
 
     useEffect(() => {
@@ -442,13 +655,17 @@ const Project = () => {
     }, [messages, messageBox])
 
     // Compute users not in the project
-    const projectUserIds = new Set((project.users || []).map(u => typeof u === 'object' ? u._id : u));
+    const projectUserIds = new Set((project?.users || []).map(u => typeof u === 'object' ? u._id : u));
     const usersNotInProject = users.filter(u => !projectUserIds.has(u._id));
 
     // Sync scroll between textarea and line numbers
     const handleEditorScroll = (e) => {
         if (lineNumberRef.current) {
             lineNumberRef.current.scrollTop = e.target.scrollTop;
+        }
+        if (highlightedCodeRef.current) {
+            highlightedCodeRef.current.scrollTop = e.target.scrollTop;
+            highlightedCodeRef.current.scrollLeft = e.target.scrollLeft;
         }
         updateActiveLine();
     };
@@ -923,10 +1140,10 @@ const Project = () => {
                         </button>
                     </header>
                     <div className="flex flex-col gap-2 p-4 overflow-y-auto">
-                        {(!project.users || project.users.length === 0) && (
+                        {(!project?.users || project.users.length === 0) && (
                             <div className="text-slate-500 text-center py-4">No collaborators found for this project.</div>
                         )}
-                        {project.users && project.users.map((u, idx) => {
+                        {project?.users && project.users.map((u, idx) => {
                             const userObj = typeof u === 'object' && u.email ? u : users.find(usr => usr._id === (u._id || u));
                             if (!userObj) return null;
                             return (
@@ -1262,9 +1479,37 @@ const Project = () => {
                                 className="flex-grow h-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                                 style={{ position: 'relative' }}
                             >
+                                <div
+                                    ref={highlightedCodeRef}
+                                    className="absolute inset-0 overflow-auto pointer-events-none"
+                                    aria-hidden="true"
+                                >
+                                    <SyntaxHighlighter
+                                        language={getLanguageFromFilename(currentFile || '')}
+                                        style={oneDark}
+                                        wrapLongLines
+                                        customStyle={{
+                                            margin: 0,
+                                            background: 'transparent',
+                                            minHeight: '100%',
+                                            lineHeight: '1.5em',
+                                            fontSize: '14px',
+                                            fontFamily: 'Fira Mono, Menlo, Monaco, Consolas, monospace',
+                                            padding: '0.5rem',
+                                        }}
+                                        codeTagProps={{
+                                            style: {
+                                                fontFamily: 'Fira Mono, Menlo, Monaco, Consolas, monospace',
+                                            },
+                                        }}
+                                    >
+                                        {currentFile ? (getFileNodeByPath(fileTree, currentFile)?.contents || ' ') : ' '}
+                                    </SyntaxHighlighter>
+                                </div>
+
                                 <textarea
                                     ref={textareaRef}
-                                    className="w-full h-full min-h-0 px-4 py-4 border-none outline-none font-mono text-sm bg-transparent text-slate-200 resize-none focus:ring-0 focus:outline-none"
+                                    className="absolute inset-0 w-full h-full min-h-0 border-none outline-none font-mono text-sm bg-transparent text-transparent caret-slate-200 resize-none focus:ring-0 focus:outline-none selection:bg-blue-500/30"
                                     value={currentFile ? (getFileNodeByPath(fileTree, currentFile)?.contents || '') : ''}
                                     onChange={(e) => {
                                         // Update the nested fileTree immutably
@@ -1329,7 +1574,9 @@ const Project = () => {
                                         overflow: 'auto',
                                         background: 'transparent',
                                         fontSize: '14px',
-                                        padding: '0.5rem'
+                                        padding: '0.5rem',
+                                        color: 'transparent',
+                                        caretColor: '#e2e8f0'
                                     }}
                                     onScroll={handleEditorScroll}
                                     onClick={updateActiveLine}

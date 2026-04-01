@@ -1,0 +1,16 @@
+{
+  "name": "ai-chat-collaborator",
+  "version": "1.0.0",
+  "description": "AI-powered collaborative code editor",
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev --prefix backend & npm run dev --prefix frontend",
+    "build": "npm run build --prefix frontend && npm run build --prefix backend",
+    "start": "npm start --prefix backend",
+    "build:frontend": "npm run build --prefix frontend",
+    "build:backend": "npm run build --prefix backend"
+  },
+  "keywords": ["ai", "collaboration", "code-editor", "websocket"],
+  "author": "Sunay Kulkarni",
+  "license": "ISC"
+}
