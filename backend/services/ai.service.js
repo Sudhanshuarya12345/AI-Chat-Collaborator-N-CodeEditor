@@ -4,8 +4,52 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_KEY);
-const DEFAULT_PROVIDER_ORDER = ['openrouter', 'openai', 'anthropic', 'xai', 'gemini'];
-const SHARED_SYSTEM_PROMPT = 'You are an expert coding assistant. Always respond in valid JSON with at least a "text" field. When asked to scaffold projects, include fileTree, buildCommand, and startCommand when possible.';
+const DEFAULT_PROVIDER_ORDER = ['openrouter', 'openai', 'anthropic', 'xai', 'gemini', 'groq'];
+const SHARED_SYSTEM_PROMPT = `You are an expert coding assistant. Always respond in valid JSON with at least a "text" field.
+
+When asked to create, build, or scaffold projects/applications, you MUST include fileTree, buildCommand, and startCommand properties in your JSON response.
+
+Example response format for project creation:
+{
+  "text": "Here's your project structure...",
+  "fileTree": {
+    "index.html": {
+      "file": {
+        "contents": "<!DOCTYPE html>..."
+      }
+    },
+    "style.css": {
+      "file": {
+        "contents": "body { ... }"
+      }
+    },
+    "script.js": {
+      "file": {
+        "contents": "console.log('...');"
+      }
+    }
+  },
+  "buildCommand": {
+    "mainItem": "npm",
+    "commands": ["install"]
+  },
+  "startCommand": {
+    "mainItem": "open",
+    "commands": ["index.html"]
+  }
+}
+
+For simple text responses without file creation:
+{
+  "text": "Your answer here..."
+}
+
+IMPORTANT:
+- Always return valid JSON
+- fileTree keys should be filenames/paths
+- Each file must have "file": { "contents": "..." } structure
+- Include proper build and start commands when applicable
+- Make code complete and runnable`;
 
 const model = genAI.getGenerativeModel({
     model: 'gemini-2.0-flash',
@@ -158,9 +202,53 @@ const model = genAI.getGenerativeModel({
       return result.response.text();
     };
 
-    const generateWithOpenAICompatible = async ({ providerName, baseUrl, apiKey, modelName, prompt }) => {
+    const buildForcedJsonPrompt = (prompt) => {
+      return `${prompt}\n\nReturn ONLY a valid JSON object. Do not use markdown code fences.`;
+    };
+
+    const normalizeJsonText = (rawText) => {
+      if (!rawText || typeof rawText !== 'string') {
+        return JSON.stringify({ text: '' });
+      }
+
+      const trimmed = rawText.trim();
+
+      // 1) Direct JSON
+      try {
+        JSON.parse(trimmed);
+        return trimmed;
+      } catch {}
+
+      // 2) JSON inside ```json ... ``` fences
+      const fencedJsonMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+      if (fencedJsonMatch?.[1]) {
+        const candidate = fencedJsonMatch[1].trim();
+        try {
+          JSON.parse(candidate);
+          return candidate;
+        } catch {}
+      }
+
+      // 3) Fallback text payload
+      return JSON.stringify({ text: trimmed });
+    };
+
+    const generateWithOpenAICompatible = async ({ providerName, baseUrl, apiKey, modelName, prompt, useJsonResponseFormat = true }) => {
       if (!apiKey) {
         throw new Error(`${providerName} key is not configured.`);
+      }
+
+      const requestBody = {
+        model: modelName,
+        temperature: 0.4,
+        messages: [
+          { role: 'system', content: SHARED_SYSTEM_PROMPT },
+          { role: 'user', content: buildForcedJsonPrompt(prompt) },
+        ],
+      };
+
+      if (useJsonResponseFormat) {
+        requestBody.response_format = { type: 'json_object' };
       }
 
       const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -169,15 +257,7 @@ const model = genAI.getGenerativeModel({
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model: modelName,
-          temperature: 0.4,
-          response_format: { type: 'json_object' },
-          messages: [
-            { role: 'system', content: SHARED_SYSTEM_PROMPT },
-            { role: 'user', content: prompt },
-          ],
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       const data = await response.json().catch(() => ({}));
@@ -193,7 +273,7 @@ const model = genAI.getGenerativeModel({
         throw new Error(`${providerName} returned an empty response.`);
       }
 
-      return text;
+      return normalizeJsonText(text);
     };
 
     const generateWithAnthropic = async (prompt) => {
@@ -266,6 +346,17 @@ const model = genAI.getGenerativeModel({
       });
     };
 
+    const generateWithGroq = async (prompt) => {
+      return generateWithOpenAICompatible({
+        providerName: 'Groq',
+        baseUrl: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
+        apiKey: process.env.GROQ_API_KEY,
+        modelName: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+        prompt,
+        useJsonResponseFormat: false,
+      });
+    };
+
     const generateWithProvider = async (provider, prompt) => {
       switch (provider) {
         case 'openrouter':
@@ -278,6 +369,8 @@ const model = genAI.getGenerativeModel({
           return generateWithAnthropic(prompt);
         case 'xai':
           return generateWithXai(prompt);
+        case 'groq':
+          return generateWithGroq(prompt);
         default:
           throw new Error(`Unknown AI provider: ${provider}`);
       }

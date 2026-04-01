@@ -95,38 +95,23 @@ const Home = () => {
     <main className='min-h-screen bg-slate-900 p-6'>
       <div className="max-w-7xl mx-auto">
         {/* Header Section with Gradient */}
-        <div className="bg-slate-800 rounded-2xl shadow-lg p-8 mb-8 border border-slate-700">
-          <div className="flex justify-between items-center">
+        <div className="bg-slate-800 rounded-2xl shadow-lg p-6 md:p-8 mb-8 border border-slate-700">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
             <div>
-              <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent">
-                My Projects
+              <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent">
+                DevAssist
               </h1>
-              <p className="text-slate-300 mt-2 flex items-center gap-2">
+              <p className="text-slate-300 mt-2 flex items-center gap-2 text-sm md:text-base">
                 <i className='ri-user-3-line'></i>
-                Welcome back, {user?.email}
-                <span className="text-xs text-slate-400 ml-2 flex items-center gap-1">
-                  (ID: {user?._id})
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(user?._id || '')
-                      setCopied(true)
-                      setTimeout(() => setCopied(false), 1200)
-                    }}
-                    className="ml-1 px-1 py-0.5 rounded hover:bg-slate-700 transition text-blue-400 border border-slate-700"
-                    title={copied ? 'Copied!' : 'Copy ID'}
-                  >
-                    {copied ? <i className="ri-check-line"></i> : <i className="ri-file-copy-line"></i>}
-                  </button>
-                </span>
+                <span>Welcome back, <span className="font-semibold">{user?.email}</span></span>
               </p>
             </div>
             <button
               onClick={() => setIsModalOpen(true)}
-              className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-3 rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-blue-500/20 transform hover:-translate-y-0.5"
+              className="w-full md:w-auto bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-3 rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-300 flex items-center justify-center gap-2 shadow-lg hover:shadow-blue-500/20 transform hover:-translate-y-0.5"
             >
               <i className='ri-add-line text-xl'></i>
-              New Project
+              <span className="hidden sm:inline">New Project</span>
             </button>
           </div>
         </div>
@@ -208,7 +193,7 @@ const Home = () => {
             {filteredProjects.map((project) => (
               <div
                 key={project._id}
-                onClick={() => navigate('/project', { state: { project } })}
+                onClick={() => navigate(`/project/${project._id}`, { state: { project } })}
                 className="group bg-slate-800 rounded-xl shadow-lg hover:shadow-blue-500/10 transition-all duration-300 p-6 cursor-pointer border border-slate-700 hover:border-blue-500/30 transform hover:-translate-y-1"
               >
                 <div className="flex justify-between items-start mb-4">
@@ -236,7 +221,7 @@ const Home = () => {
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        navigate('/project', { state: { project } });
+                        navigate(`/project/${project._id}`, { state: { project } });
                       }}
                       className="text-blue-400 hover:text-blue-300 text-sm font-medium flex items-center gap-1"
                     >
