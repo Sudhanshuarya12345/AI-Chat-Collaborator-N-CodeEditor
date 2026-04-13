@@ -1,5 +1,5 @@
 import React from 'react'
-import { Route, BrowserRouter, Routes } from 'react-router-dom'
+import { Route, BrowserRouter, Routes, Navigate } from 'react-router-dom'
 import Home from '../screens/Home.jsx'
 import Login from '../screens/Login.jsx'
 import Register from '../screens/Register.jsx'
@@ -13,7 +13,10 @@ const AppRouter = () => {
             <Route path="/" element={ <UserAuth><Home/></UserAuth> } />
             <Route path="/login" element={ <Login/> } />
             <Route path="/register" element={ <Register/> } />
-            <Route path="/project" element={ <UserAuth><Project/></UserAuth> } />
+            <Route path="/project/:projectId" element={ <UserAuth><Project/></UserAuth> } />
+            <Route path="/:projectId" element={ <UserAuth><Project/></UserAuth> } />
+            <Route path="/project" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
             
         </Routes>
     </BrowserRouter>

@@ -120,10 +120,18 @@ io.on('connection', (socket) => {
                 try {
                     const result = await generateResult(prompt);
                     
+                    // Parse the result if it's a JSON string
+                    let parsedResult;
+                    try {
+                        parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
+                    } catch (parseError) {
+                        parsedResult = { text: result };
+                    }
+                    
                     // Save AI response to database without _id
                     const aiMessage = new chatModel({
                         projectId: socket.project._id,
-                        message: result,
+                        message: typeof parsedResult === 'string' ? parsedResult : JSON.stringify(parsedResult),
                         sender: {
                             email: 'AI',
                             type: 'ai'
@@ -132,7 +140,7 @@ io.on('connection', (socket) => {
                     await aiMessage.save();
 
                     io.to(socket.roomId).emit('project-message', {
-                        message: result,
+                        ...parsedResult,
                         sender: {
                             email: 'AI',
                             type: 'ai'
